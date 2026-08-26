@@ -104,7 +104,7 @@ Output som JSON med nøglerne: datum, deltagere, planlagt_behandling, udfort_beh
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'claude-opus-5',
+        model: 'claude-3-5-sonnet-20241022',
         max_tokens: 1500,
         messages: [
           {
