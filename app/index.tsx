@@ -1,10 +1,11 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, font, radius, spacing } from '@/theme/theme';
 import { useConversations } from '@/context/ConversationsContext';
 import { useRecording } from '@/context/RecordingContext';
+import { getTranscription } from '@/lib/transcription';
 import { Button } from '@/components/Button';
 import { ConversationCard } from '@/components/ConversationCard';
 import { LiveBanner } from '@/components/LiveBanner';
@@ -12,8 +13,30 @@ import { LiveBanner } from '@/components/LiveBanner';
 export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { conversations, loading } = useConversations();
+  const { conversations, loading, update } = useConversations();
   const { activeConversationId } = useRecording();
+
+  // Poll transcription status while on screen
+  useFocusEffect(
+    React.useCallback(() => {
+      let active = true;
+      const interval = setInterval(async () => {
+        if (!active) return;
+        for (const c of conversations) {
+          if (c.status === 'recorded') {
+            const tr = await getTranscription(c.id);
+            if (active && tr?.status === 'done') {
+              update(c.id, { status: 'transcribed' });
+            }
+          }
+        }
+      }, 3000);
+      return () => {
+        active = false;
+        clearInterval(interval);
+      };
+    }, [conversations, update]),
+  );
 
   return (
     <View style={styles.root}>
