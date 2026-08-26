@@ -7,7 +7,7 @@
  * until the status is `done` or `error`.
  */
 import { File } from 'expo-file-system';
-import { supabase, ensureSession } from './supabase';
+import { supabase, ensureSession, edgeErrorMessage } from './supabase';
 
 export type TranscriptionStatus =
   | 'pending'
@@ -56,10 +56,14 @@ export async function startTranscription(
 
   // 1) Upload the compressed audio file.
   const bytes = await new File(audioUri).bytes();
+  console.log('[transcription] uploading audio', { conversationId, bytes: bytes.length });
   const { error: upErr } = await supabase.storage
     .from(BUCKET)
     .upload(path, bytes, { contentType: 'audio/mp4', upsert: true });
-  if (upErr) throw upErr;
+  if (upErr) {
+    console.warn('[transcription] upload failed', { conversationId, message: upErr.message });
+    throw new Error(`Upload af lyden fejlede: ${upErr.message}`);
+  }
 
   // 2) Mark a transcription as in-progress (so the UI can show a spinner).
   const { error: rowErr } = await supabase.from('transcriptions').upsert(
@@ -73,14 +77,22 @@ export async function startTranscription(
     },
     { onConflict: 'user_id,conversation_id' },
   );
-  if (rowErr) throw rowErr;
+  if (rowErr) {
+    console.warn('[transcription] status row failed', { conversationId, message: rowErr.message });
+    throw new Error(`Kunne ikke gemme transskriptions-status: ${rowErr.message}`);
+  }
 
   // 3) Ask the backend to transcribe (it talks to Gladia and the callback fills
   //    in the result). The user's JWT is attached automatically.
   const { error: fnErr } = await supabase.functions.invoke('transcribe', {
     body: { conversationId, path },
   });
-  if (fnErr) throw fnErr;
+  if (fnErr) {
+    const msg = await edgeErrorMessage(fnErr);
+    console.warn('[transcription] transcribe function failed', { conversationId, message: msg });
+    throw new Error(msg);
+  }
+  console.log('[transcription] started', { conversationId });
 }
 
 /** Reads the current transcription state for a conversation, or null if none yet. */
@@ -121,7 +133,7 @@ export async function refreshTranscription(
     body: { conversationId },
   });
   if (error) {
-    console.warn('[transcription] status check failed', error.message);
+    console.warn('[transcription] status check failed', await edgeErrorMessage(error));
     return null;
   }
   return data as TranscriptionProgress;

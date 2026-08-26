@@ -23,11 +23,32 @@ interface TranscriptSegment {
   language?: string;
 }
 
+// The journal fields the app displays - kept in sync with AnalysisSection.tsx.
+const JOURNAL_KEYS = [
+  'datum',
+  'deltagere',
+  'planlagt_behandling',
+  'udfort_behandling',
+  'tilstand',
+  'respons',
+  'observationer',
+  'opfolging',
+] as const;
+
+// Structured output schema: forces Claude to return exactly these keys as
+// strings, so the client never has to guess at the response shape.
+const journalSchema = {
+  type: 'object',
+  properties: Object.fromEntries(JOURNAL_KEYS.map((k) => [k, { type: 'string' }])),
+  required: [...JOURNAL_KEYS],
+  additionalProperties: false,
+};
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
 
   try {
-    const { conversationId } = await req.json();
+    const { conversationId, speakerNames } = await req.json();
     if (!conversationId) return json({ error: 'missing conversationId' }, 400);
 
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -48,43 +69,79 @@ Deno.serve(async (req) => {
     // Fetch transcription
     const { data: tr, error: trErr } = await admin
       .from('transcriptions')
-      .select('segments,language')
+      .select('segments,language,status')
       .eq('user_id', user.id)
       .eq('conversation_id', conversationId)
       .maybeSingle();
 
     if (trErr || !tr) {
-      return json({ error: 'transskription ikke fundet' }, 400);
+      console.error('[analyze-psykolog] transcription lookup failed', {
+        conversationId,
+        dbError: trErr?.message ?? null,
+        found: !!tr,
+      });
+      return json({ error: 'Transskriptionen blev ikke fundet. Kør transskribering først.' }, 400);
+    }
+    if (tr.status !== 'done') {
+      console.warn('[analyze-psykolog] transcription not ready', {
+        conversationId,
+        status: tr.status,
+      });
+      return json({ error: `Transskriptionen er ikke færdig endnu (status: ${tr.status}).` }, 400);
     }
 
-    const segments: TranscriptSegment[] = tr.segments ?? [];
+    let segments: TranscriptSegment[] = [];
+    if (Array.isArray(tr.segments)) {
+      segments = tr.segments;
+    } else if (typeof tr.segments === 'string') {
+      try {
+        segments = JSON.parse(tr.segments);
+      } catch {
+        segments = [];
+      }
+    }
 
-    // speakerNames would be stored on client; for now we use raw speaker labels
-    // (user maps them in the UI before running analysis)
-    const speakerNames: Record<string, string> = {};
+    // Speaker-label mapping ("Taler 1" -> "Ulla") lives on the device, so the
+    // app sends it along. Fall back to the raw labels if nothing is mapped.
+    const names: Record<string, string> = {};
+    if (speakerNames && typeof speakerNames === 'object' && !Array.isArray(speakerNames)) {
+      for (const [label, name] of Object.entries(speakerNames)) {
+        if (typeof name === 'string' && name.trim()) names[label] = name.trim();
+      }
+    }
 
-    // Build transcript with real speaker names
     const transcript = segments
-      .map((seg) => {
-        const name = speakerNames[seg.speaker] ?? seg.speaker;
-        return `${name}: ${seg.text}`;
-      })
+      .map((seg) => `${names[seg.speaker] ?? seg.speaker}: ${seg.text}`)
       .join('\n\n');
 
-    // System prompt aligned with STPS journal requirements
-    const systemPrompt = `Du er en erfaren psykolog og journalisialist der hjælper med at strukturere kliniknoter.
+    if (!transcript.trim()) {
+      console.warn('[analyze-psykolog] empty transcript', {
+        conversationId,
+        segmentCount: segments.length,
+      });
+      return json({ error: 'Transskriptionen er tom - der er ingen tekst at analysere.' }, 400);
+    }
+
+    console.log('[analyze-psykolog] start', {
+      conversationId,
+      segmentCount: segments.length,
+      transcriptChars: transcript.length,
+      mappedSpeakers: Object.keys(names),
+    });
+
+    const systemPrompt = `Du er en erfaren psykolog der hjælper med at strukturere kliniknoter.
 
 Din opgave er at analysere samtaler og producere velformaterede journalindlæg, der overholder Sundhedsstyrelsens (STPS) vejledning for psykologers journalføring.
 
 Hver journal skal indeholde:
-1. **Dato** (dato for sessionen)
-2. **Deltagere** (psykolog + patient/klient)
-3. **Planlagt behandling** - hvad var intentionen for denne session?
-4. **Udført behandling** - hvad blev faktisk gjort?
-5. **Patientens tilstand** - hvordan var de fysisk/psykisk?
-6. **Respons på behandling** - hvordan reagerede de?
-7. **Observationer** - vigtige fund eller tegn
-8. **Opfølgning** - næste skridt, handlepunkter, anbefalinger
+1. **datum** - dato for sessionen (hvis den nævnes i samtalen)
+2. **deltagere** - psykolog + patient/klient
+3. **planlagt_behandling** - hvad var intentionen for denne session?
+4. **udfort_behandling** - hvad blev faktisk gjort?
+5. **tilstand** - hvordan var patienten fysisk/psykisk?
+6. **respons** - hvordan reagerede patienten på behandlingen?
+7. **observationer** - vigtige fund eller tegn
+8. **opfolging** - næste skridt, handlepunkter, anbefalinger
 
 Formatet skal være:
 - Klart og struktureret (så kolleger hurtigt kan søge information)
@@ -92,49 +149,92 @@ Formatet skal være:
 - Kortfattet, kun relevante detaljer
 - Fri for vurderinger uden grund
 
-Hvis nogle elementer ikke kan identificeres fra samtalen, markér dem som "[Ikke dokumenteret]".
+Hvis et element ikke kan identificeres fra samtalen, skriv "[Ikke dokumenteret]" i det felt.`;
 
-Output som JSON med nøglerne: datum, deltagere, planlagt_behandling, udfort_behandling, tilstand, respons, observationer, opfolging.`;
+    const requestBody = {
+      model: 'claude-opus-5',
+      // Rummelig grænse: modellens interne ræsonnering tæller også med her,
+      // så 4000 var for lavt og kunne afbryde svaret midtvejs.
+      max_tokens: 16000,
+      system: systemPrompt,
+      output_config: {
+        format: { type: 'json_schema', schema: journalSchema },
+      },
+      messages: [
+        {
+          role: 'user',
+          content: `Analyser denne transskriberede samtale og producer et STPS-kompatibelt journalnotat:\n\n${transcript}`,
+        },
+      ],
+    };
 
-    // Call Claude
     const anthropicResp = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'x-api-key': ANTHROPIC_KEY,
+        'anthropic-version': '2023-06-01',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        model: 'claude-3-5-sonnet-20241022',
-        max_tokens: 1500,
-        messages: [
-          {
-            role: 'user',
-            content: `Analyser denne transskriberet samtale og producer en STPS-kompatibel journalnotat:\n\n${transcript}`,
-          },
-        ],
-        system: systemPrompt,
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     if (!anthropicResp.ok) {
-      const err = await anthropicResp.json().catch(() => ({}));
-      return json({ error: 'anthropic failed', detail: err }, 502);
+      const errText = await anthropicResp.text();
+      console.error('[analyze-psykolog] anthropic api failed', {
+        conversationId,
+        status: anthropicResp.status,
+        errorText: errText,
+        model: requestBody.model,
+        transcriptChars: transcript.length,
+      });
+      return json({
+        error: `AI-analysen fejlede (serverfejl ${anthropicResp.status}). Prøv igen om lidt.`,
+        detail: errText.slice(0, 500),
+      }, 502);
     }
 
     const anthropicData = await anthropicResp.json();
-    const analysisText = anthropicData.content?.[0]?.text ?? '';
+    const stopReason = anthropicData.stop_reason;
+    console.log('[analyze-psykolog] anthropic response', {
+      conversationId,
+      stopReason,
+      usage: anthropicData.usage ?? null,
+    });
 
-    // Try to parse JSON from Claude's response
-    let analysis = {};
-    const jsonMatch = analysisText.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      try {
-        analysis = JSON.parse(jsonMatch[0]);
-      } catch {
-        analysis = { raw: analysisText };
-      }
-    } else {
-      analysis = { raw: analysisText };
+    if (stopReason === 'refusal') {
+      console.error('[analyze-psykolog] model refused', {
+        conversationId,
+        stopDetails: anthropicData.stop_details ?? null,
+      });
+      return json({ error: 'AI-modellen afviste at analysere denne samtale.' }, 502);
+    }
+    if (stopReason === 'max_tokens') {
+      console.error('[analyze-psykolog] response truncated at max_tokens', { conversationId });
+      return json({ error: 'Analysen blev for lang og blev afbrudt. Prøv igen.' }, 502);
+    }
+
+    // deno-lint-ignore no-explicit-any
+    const analysisText = anthropicData.content?.find((c: any) => c.type === 'text')?.text ?? '';
+    if (!analysisText) {
+      console.error('[analyze-psykolog] no text content in response', {
+        conversationId,
+        stopReason,
+        contentTypes: (anthropicData.content ?? []).map((c: { type: string }) => c.type),
+      });
+      return json({ error: 'AI-analysen gav intet svar. Prøv igen.' }, 502);
+    }
+
+    // Structured outputs guarantee valid JSON matching journalSchema.
+    let analysis: Record<string, string>;
+    try {
+      analysis = JSON.parse(analysisText);
+    } catch (e) {
+      console.error('[analyze-psykolog] JSON parse failed despite structured output', {
+        conversationId,
+        parseError: String(e),
+        textPreview: analysisText.slice(0, 300),
+      });
+      return json({ error: 'AI-svaret kunne ikke læses. Prøv igen.' }, 502);
     }
 
     // Store result as "psykolog" analysis
@@ -144,17 +244,26 @@ Output som JSON med nøglerne: datum, deltagere, planlagt_behandling, udfort_beh
         conversation_id: conversationId,
         type: 'psykolog',
         output: analysis,
-        created_at: new Date().toISOString(),
+        error: null,
       },
       { onConflict: 'user_id,conversation_id,type' },
     );
 
     if (saveErr) {
-      return json({ error: 'could not save analysis', detail: saveErr.message }, 500);
+      console.error('[analyze-psykolog] save failed', {
+        conversationId,
+        dbError: saveErr.message,
+      });
+      return json({ error: 'Analysen kunne ikke gemmes.', detail: saveErr.message }, 500);
     }
 
+    console.log('[analyze-psykolog] done', {
+      conversationId,
+      fields: Object.keys(analysis),
+    });
     return json({ ok: true, analysis });
   } catch (e) {
+    console.error('[analyze-psykolog] unhandled error', { error: String(e) });
     return json({ error: String(e) }, 500);
   }
 });

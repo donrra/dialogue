@@ -1,6 +1,6 @@
 // Client-side analysis API (calls edge functions)
 
-import { supabase, ensureSession } from './supabase';
+import { supabase, ensureSession, edgeErrorMessage } from './supabase';
 
 export type AnalysisType = 'psykolog' | 'forretningsreferat' | 'interview';
 
@@ -14,17 +14,19 @@ export interface AnalysisResult {
 export async function runAnalysis(
   conversationId: string,
   type: AnalysisType,
+  speakerNames?: Record<string, string>,
 ): Promise<AnalysisResult> {
   const uid = await ensureSession();
   if (!uid) throw new Error('Ingen forbindelse til serveren.');
 
   const fnName = `analyze-${type}`;
   const { data, error } = await supabase.functions.invoke(fnName, {
-    body: { conversationId },
+    body: { conversationId, speakerNames },
   });
 
-  if (error) throw error;
-  if (!data || !data.ok) throw new Error(data?.error ?? 'Analyse gik i stå');
+  console.log('[analysis] response from edge function:', { fnName, data, error: error?.message });
+  if (error) throw new Error(await edgeErrorMessage(error));
+  if (!data || !data.ok) throw new Error(data?.error ?? 'Analysen gik i stå');
 
   return {
     type,

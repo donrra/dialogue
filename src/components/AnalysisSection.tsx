@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors, font, radius, spacing } from '@/theme/theme';
 import { runAnalysis, getAnalysis, type AnalysisResult } from '@/lib/analysis';
 import type { Conversation } from '@/lib/types';
@@ -69,15 +69,15 @@ export function AnalysisSection({ conversation }: { conversation: Conversation }
       setRunning(type);
       setError(null);
       try {
-        const result = await runAnalysis(cid, type);
+        const result = await runAnalysis(cid, type, conversation.speakerNames);
         setResults((prev) => ({ ...prev, [type]: result }));
       } catch (e: any) {
-        setError(e?.message ?? 'Analyse gik i stå');
+        setError(e?.message ?? 'Analysen gik i stå');
       } finally {
         setRunning(null);
       }
     },
-    [cid],
+    [cid, conversation.speakerNames],
   );
 
   // Only show psykolog for now (others are placeholders)
@@ -160,11 +160,22 @@ function PsykologResultDisplay({ result }: { result: AnalysisResult }) {
     { label: 'Opfølgning', key: 'opfolging' },
   ];
 
+  const visibleFields = fields.filter(({ key }) => output[key]);
+  const hasRaw = Boolean(output.raw);
+  const isEmpty = visibleFields.length === 0 && !hasRaw;
+
+  if (isEmpty) {
+    return (
+      <View style={styles.emptyResult}>
+        <Text style={styles.emptyText}>Ingen resultat fra analysen</Text>
+      </View>
+    );
+  }
+
   return (
-    <ScrollView style={styles.resultScroll} showsVerticalScrollIndicator={false}>
-      {fields.map(({ label, key }) => {
+    <View>
+      {visibleFields.map(({ label, key }) => {
         const value = output[key];
-        if (!value) return null;
         return (
           <View key={key} style={styles.field}>
             <Text style={styles.fieldLabel}>{label}</Text>
@@ -172,12 +183,13 @@ function PsykologResultDisplay({ result }: { result: AnalysisResult }) {
           </View>
         );
       })}
-      {output.raw && (
+      {hasRaw && (
         <View style={styles.field}>
+          <Text style={styles.fieldLabel}>Resultat</Text>
           <Text style={styles.fieldValue}>{String(output.raw)}</Text>
         </View>
       )}
-    </ScrollView>
+    </View>
   );
 }
 
@@ -227,14 +239,17 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg,
     borderRadius: radius.md,
     padding: spacing.lg,
-    maxHeight: 400,
   },
-  resultScroll: { flex: 1 },
   field: { marginBottom: spacing.lg, gap: spacing.xs },
   fieldLabel: { color: colors.textMuted, fontSize: font.size.xs, textTransform: 'uppercase', fontWeight: font.weight.bold },
   fieldValue: { color: colors.text, fontSize: font.size.md, lineHeight: 22 },
+  emptyResult: {
+    padding: spacing.lg,
+    alignItems: 'center',
+  },
+  emptyText: { color: colors.textMuted, fontSize: font.size.sm },
   comingSoon: {
-    backgroundColor: colors.surfaceDim,
+    backgroundColor: colors.surface,
     borderRadius: radius.md,
     padding: spacing.md,
     alignItems: 'center',

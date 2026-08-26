@@ -7,7 +7,7 @@
  */
 import 'react-native-url-polyfill/auto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, FunctionsHttpError } from '@supabase/supabase-js';
 import Constants from 'expo-constants';
 
 const extra = (Constants.expoConfig?.extra ?? {}) as {
@@ -26,6 +26,26 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     detectSessionInUrl: false,
   },
 });
+
+/**
+ * Extracts the real error message from a failed edge-function call.
+ * supabase.functions.invoke only says "non-2xx status code" - the actual
+ * reason (e.g. "Transskriptionen er tom") is in the response body.
+ */
+export async function edgeErrorMessage(error: unknown): Promise<string> {
+  if (error instanceof FunctionsHttpError) {
+    try {
+      const body = await error.context.json();
+      if (body && typeof body.error === 'string') {
+        console.warn('[edge] function returned error body:', body);
+        return body.error;
+      }
+    } catch {
+      // Body was not JSON - fall through to the generic message.
+    }
+  }
+  return error instanceof Error ? error.message : String(error);
+}
 
 let sessionPromise: Promise<string | null> | null = null;
 

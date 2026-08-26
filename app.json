@@ -49,9 +49,11 @@
       ],
       "expo-asset"
     ],
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
     "updates": {
       "enabled": true,
-      "fallbackToCacheOnError": true,
       "url": "https://u.expo.dev/c4d60f47-e555-4886-8e94-802ae2dc9cec"
     },
     "extra": {
