@@ -9,7 +9,6 @@ import { useRecording } from '@/context/RecordingContext';
 import { getTranscription } from '@/lib/transcription';
 import { deleteLocalAudio } from '@/lib/audioCleanup';
 import { Button } from '@/components/Button';
-import { ConversationCard } from '@/components/ConversationCard';
 import { LiveBanner } from '@/components/LiveBanner';
 import { NewClientModal } from '@/components/NewClientModal';
 import { ClientPickerModal } from '@/components/ClientPickerModal';
@@ -52,10 +51,7 @@ export default function HomeScreen() {
     }, [conversations, update]),
   );
 
-  const recent = conversations.slice(0, 3);
-  const unlinked = conversations.filter(
-    (c) => !c.clientId && !recent.includes(c),
-  );
+  const unlinkedCount = conversations.filter((c) => !c.clientId).length;
 
   const q = search.trim().toLowerCase();
   const visibleClients = q
@@ -69,12 +65,6 @@ export default function HomeScreen() {
     }
     return map;
   }, [conversations]);
-
-  const clientNameFor = (clientId?: string) =>
-    clientId ? clients.find((k) => k.id === clientId)?.name : undefined;
-
-  const openConversation = (id: string, status: string) =>
-    router.push(status === 'recording' ? `/record/${id}` : `/conversation/${id}`);
 
   return (
     <View style={styles.root}>
@@ -94,20 +84,6 @@ export default function HomeScreen() {
               <LiveBanner
                 onPress={() => router.push(`/record/${activeConversationId}`)}
               />
-            )}
-
-            {recent.length > 0 && (
-              <>
-                <Text style={styles.sectionLabel}>SENESTE SESSIONER</Text>
-                {recent.map((c) => (
-                  <ConversationCard
-                    key={c.id}
-                    conversation={c}
-                    clientName={clientNameFor(c.clientId)}
-                    onPress={() => openConversation(c.id, c.status)}
-                  />
-                ))}
-              </>
             )}
 
             <View style={styles.clientsHeader}>
@@ -168,21 +144,16 @@ export default function HomeScreen() {
           ) : null
         }
         ListFooterComponent={
-          unlinked.length > 0 ? (
-            <View>
-              <Text style={styles.sectionLabel}>UDEN KLIENT</Text>
-              <Text style={styles.unlinkedHint}>
-                Ældre samtaler uden mappe. Åbn dem og vælg en klient for at
-                flytte dem på plads.
+          unlinkedCount > 0 ? (
+            <Pressable
+              style={({ pressed }) => [styles.unlinkedRow, pressed && styles.clientRowPressed]}
+              onPress={() => router.push('/unlinked')}
+            >
+              <Text style={styles.unlinkedText}>
+                Uden klient ({unlinkedCount})
               </Text>
-              {unlinked.map((c) => (
-                <ConversationCard
-                  key={c.id}
-                  conversation={c}
-                  onPress={() => openConversation(c.id, c.status)}
-                />
-              ))}
-            </View>
+              <Text style={styles.chevron}>›</Text>
+            </Pressable>
           ) : null
         }
         showsVerticalScrollIndicator={false}
@@ -302,12 +273,19 @@ const styles = StyleSheet.create({
     marginBottom: spacing.xs,
   },
   emptyBody: { color: colors.textMuted, fontSize: font.size.sm, lineHeight: 20 },
-  unlinkedHint: {
-    color: colors.textFaint,
-    fontSize: font.size.sm,
-    lineHeight: 20,
-    marginBottom: spacing.md,
+  unlinkedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    marginTop: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderStyle: 'dashed',
+    borderRadius: radius.md,
   },
+  unlinkedText: { color: colors.textMuted, fontSize: font.size.sm },
   footer: {
     position: 'absolute',
     left: 0,

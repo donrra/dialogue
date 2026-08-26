@@ -10,7 +10,9 @@ import { AudioPlayerBar } from '@/components/AudioPlayerBar';
 import { TranscriptSection } from '@/components/TranscriptSection';
 import { AnalysisSection } from '@/components/AnalysisSection';
 import { ClientPickerModal } from '@/components/ClientPickerModal';
-import { formatBytes, formatDate, formatDuration } from '@/lib/format';
+import { formatDate, formatDuration } from '@/lib/format';
+import { deleteLocalAudio } from '@/lib/audioCleanup';
+import { deleteConversationCloudData } from '@/lib/cloudCleanup';
 
 export default function ConversationDetailScreen() {
   const router = useRouter();
@@ -30,17 +32,23 @@ export default function ConversationDetailScreen() {
   }
 
   const handleDelete = () => {
-    Alert.alert('Slet samtale?', 'Optagelsen og indholdet slettes permanent.', [
-      { text: 'Annullér', style: 'cancel' },
-      {
-        text: 'Slet',
-        style: 'destructive',
-        onPress: () => {
-          remove(id);
-          router.replace('/');
+    Alert.alert(
+      'Slet session?',
+      'Optagelse, transskribering og journalnotat slettes permanent - også på serveren.',
+      [
+        { text: 'Annullér', style: 'cancel' },
+        {
+          text: 'Slet',
+          style: 'destructive',
+          onPress: () => {
+            if (conversation) deleteLocalAudio(conversation);
+            deleteConversationCloudData(id);
+            remove(id);
+            router.replace('/');
+          },
         },
-      },
-    ]);
+      ],
+    );
   };
 
   return (
@@ -62,7 +70,6 @@ export default function ConversationDetailScreen() {
         <Text style={styles.meta}>
           {formatDate(conversation.createdAt)}
           {conversation.durationMs ? `  ·  ${formatDuration(conversation.durationMs)}` : ''}
-          {conversation.fileSizeBytes ? `  ·  ${formatBytes(conversation.fileSizeBytes)}` : ''}
         </Text>
 
         {conversation.audioUri && (

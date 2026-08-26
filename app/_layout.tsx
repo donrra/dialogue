@@ -34,6 +34,7 @@ export default function RootLayout() {
               <Stack.Screen name="record/[id]" options={{ gestureEnabled: false }} />
               <Stack.Screen name="conversation/[id]" />
               <Stack.Screen name="client/[id]" />
+              <Stack.Screen name="unlinked" />
             </Stack>
           </RecordingProvider>
         </ConversationsProvider>

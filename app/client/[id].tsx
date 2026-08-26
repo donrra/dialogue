@@ -15,6 +15,8 @@ import { useClients } from '@/context/ClientsContext';
 import { useConversations } from '@/context/ConversationsContext';
 import { runOverview, getOverview, type OverviewResult } from '@/lib/overview';
 import { formatDate } from '@/lib/format';
+import { deleteLocalAudio } from '@/lib/audioCleanup';
+import { deleteConversationCloudData, deleteOverviewCloudData } from '@/lib/cloudCleanup';
 import { Button } from '@/components/Button';
 
 const OVERVIEW_FIELDS = [
@@ -30,7 +32,7 @@ export default function ClientFolderScreen() {
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { getById, remove } = useClients();
-  const { conversations, update } = useConversations();
+  const { conversations, update, remove: removeConversation } = useConversations();
   const client = getById(id);
 
   const [overview, setOverview] = useState<OverviewResult | null>(null);
@@ -80,16 +82,26 @@ export default function ClientFolderScreen() {
 
   const handleDelete = () => {
     if (!client) return;
+    const n = sessions.length;
     Alert.alert(
-      'Slet klient?',
-      'Klienten fjernes fra registret. Samtalerne slettes ikke - de mister kun koblingen.',
+      'Slet klient og alle data?',
+      n === 0
+        ? 'Mappen og behandlingsoverblikket slettes permanent.'
+        : `${client.name}s mappe slettes permanent sammen med ${
+            n === 1 ? '1 session' : `${n} sessioner`
+          }: optagelser, transskriberinger, journalnotater og behandlingsoverblik - også på serveren.`,
       [
         { text: 'Annullér', style: 'cancel' },
         {
-          text: 'Slet',
+          text: 'Slet alt',
           style: 'destructive',
           onPress: () => {
-            sessions.forEach((s) => update(s.id, { clientId: undefined }));
+            sessions.forEach((s) => {
+              deleteLocalAudio(s);
+              deleteConversationCloudData(s.id);
+              removeConversation(s.id);
+            });
+            deleteOverviewCloudData(client.id);
             remove(client.id);
             router.replace('/');
           },
