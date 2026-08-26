@@ -7,6 +7,7 @@ import { useConversations } from '@/context/ConversationsContext';
 import { ParticipantChip } from '@/components/ParticipantChip';
 import { AudioPlayerBar } from '@/components/AudioPlayerBar';
 import { TranscriptSection } from '@/components/TranscriptSection';
+import { AnalysisSection } from '@/components/AnalysisSection';
 import { formatBytes, formatDate, formatDuration } from '@/lib/format';
 
 export default function ConversationDetailScreen() {
@@ -83,13 +84,7 @@ export default function ConversationDetailScreen() {
 
         {/* Fase 3 — analysis */}
         <Text style={styles.sectionLabel}>Analyse</Text>
-        <View style={styles.placeholder}>
-          <Text style={styles.placeholderTitle}>Analyse kommer senere</Text>
-          <Text style={styles.placeholderBody}>
-            Vælg en analyse-type (psykolog, forretningsreferat, interview …) og få
-            en skræddersyet AI-analyse af samtalen.
-          </Text>
-        </View>
+        <AnalysisSection conversation={conversation} />
       </ScrollView>
     </View>
   );
