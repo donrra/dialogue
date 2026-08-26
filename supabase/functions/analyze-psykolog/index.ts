@@ -45,27 +45,23 @@ Deno.serve(async (req) => {
 
     const admin = createClient(SUPABASE_URL, SERVICE_KEY);
 
-    // Fetch transcription + conversation (for participant names)
-    const [tr, conv] = await Promise.all([
-      admin
-        .from('transcriptions')
-        .select('segments,language')
-        .eq('user_id', user.id)
-        .eq('conversation_id', conversationId)
-        .maybeSingle(),
-      admin
-        .from('conversations')
-        .select('title,participants,speakerNames')
-        .eq('id', conversationId)
-        .maybeSingle(),
-    ]);
+    // Fetch transcription
+    const { data: tr, error: trErr } = await admin
+      .from('transcriptions')
+      .select('segments,language')
+      .eq('user_id', user.id)
+      .eq('conversation_id', conversationId)
+      .maybeSingle();
 
-    if (tr.error || !tr.data || tr.data.status !== 'done') {
-      return json({ error: 'transskription ikke klar' }, 400);
+    if (trErr || !tr) {
+      return json({ error: 'transskription ikke fundet' }, 400);
     }
 
-    const segments: TranscriptSegment[] = tr.data.segments ?? [];
-    const speakerNames = conv.data?.speakerNames ?? {};
+    const segments: TranscriptSegment[] = tr.segments ?? [];
+
+    // speakerNames would be stored on client; for now we use raw speaker labels
+    // (user maps them in the UI before running analysis)
+    const speakerNames: Record<string, string> = {};
 
     // Build transcript with real speaker names
     const transcript = segments
