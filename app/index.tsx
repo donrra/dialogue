@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, font, radius, spacing, speakerColorFor } from '@/theme/theme';
@@ -7,10 +7,12 @@ import { useConversations } from '@/context/ConversationsContext';
 import { useClients } from '@/context/ClientsContext';
 import { useRecording } from '@/context/RecordingContext';
 import { getTranscription } from '@/lib/transcription';
+import { deleteLocalAudio } from '@/lib/audioCleanup';
 import { Button } from '@/components/Button';
 import { ConversationCard } from '@/components/ConversationCard';
 import { LiveBanner } from '@/components/LiveBanner';
 import { NewClientModal } from '@/components/NewClientModal';
+import { ClientPickerModal } from '@/components/ClientPickerModal';
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -19,8 +21,11 @@ export default function HomeScreen() {
   const { clients, create: createClient } = useClients();
   const { activeConversationId } = useRecording();
   const [newClient, setNewClient] = useState(false);
+  const [startSession, setStartSession] = useState(false);
+  const [search, setSearch] = useState('');
 
-  // Poll transcription status while on screen
+  // Poll transcription status while on screen; when a transcript is done the
+  // audio has served its purpose and is deleted from the device.
   useFocusEffect(
     React.useCallback(() => {
       let active = true;
@@ -30,7 +35,12 @@ export default function HomeScreen() {
           if (c.status === 'recorded') {
             const tr = await getTranscription(c.id);
             if (active && tr?.status === 'done') {
-              update(c.id, { status: 'transcribed' });
+              await deleteLocalAudio(c);
+              update(c.id, {
+                status: 'transcribed',
+                audioUri: undefined,
+                compressedUri: undefined,
+              });
             }
           }
         }
@@ -42,10 +52,34 @@ export default function HomeScreen() {
     }, [conversations, update]),
   );
 
+  const recent = conversations.slice(0, 3);
+  const unlinked = conversations.filter(
+    (c) => !c.clientId && !recent.includes(c),
+  );
+
+  const q = search.trim().toLowerCase();
+  const visibleClients = q
+    ? clients.filter((c) => c.name.toLowerCase().includes(q))
+    : clients;
+
+  const sessionCounts = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const c of conversations) {
+      if (c.clientId) map[c.clientId] = (map[c.clientId] ?? 0) + 1;
+    }
+    return map;
+  }, [conversations]);
+
+  const clientNameFor = (clientId?: string) =>
+    clientId ? clients.find((k) => k.id === clientId)?.name : undefined;
+
+  const openConversation = (id: string, status: string) =>
+    router.push(status === 'recording' ? `/record/${id}` : `/conversation/${id}`);
+
   return (
     <View style={styles.root}>
       <FlatList
-        data={conversations}
+        data={visibleClients}
         keyExtractor={(c) => c.id}
         contentContainerStyle={{
           paddingTop: insets.top + spacing.lg,
@@ -53,76 +87,101 @@ export default function HomeScreen() {
           paddingBottom: 120,
         }}
         ListHeaderComponent={
-          <View style={styles.header}>
-            <Text style={styles.kicker}>SAMTALER</Text>
+          <View>
+            <Text style={styles.kicker}>OVERBLIK</Text>
             <Text style={styles.title}>Dialogue</Text>
             {activeConversationId && (
               <LiveBanner
                 onPress={() => router.push(`/record/${activeConversationId}`)}
               />
             )}
-            <View style={styles.clientsBlock}>
-              <Text style={styles.clientsLabel}>KLIENTER</Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.clientsRow}
-              >
-                {clients.map((c) => (
-                  <Pressable
+
+            {recent.length > 0 && (
+              <>
+                <Text style={styles.sectionLabel}>SENESTE SESSIONER</Text>
+                {recent.map((c) => (
+                  <ConversationCard
                     key={c.id}
-                    style={({ pressed }) => [
-                      styles.clientChip,
-                      pressed && styles.clientChipPressed,
-                    ]}
-                    onPress={() => router.push(`/client/${c.id}`)}
-                  >
-                    <View
-                      style={[
-                        styles.clientChipDot,
-                        { backgroundColor: speakerColorFor(c.colorIndex) },
-                      ]}
-                    />
-                    <Text style={styles.clientChipName}>{c.name}</Text>
-                  </Pressable>
+                    conversation={c}
+                    clientName={clientNameFor(c.clientId)}
+                    onPress={() => openConversation(c.id, c.status)}
+                  />
                 ))}
-                <Pressable
-                  style={({ pressed }) => [
-                    styles.clientChip,
-                    styles.newClientChip,
-                    pressed && styles.clientChipPressed,
-                  ]}
-                  onPress={() => setNewClient(true)}
-                >
-                  <Text style={styles.newClientText}>＋ Ny klient</Text>
-                </Pressable>
-              </ScrollView>
+              </>
+            )}
+
+            <View style={styles.clientsHeader}>
+              <Text style={styles.sectionLabel}>KLIENTER</Text>
+              <Pressable onPress={() => setNewClient(true)} hitSlop={8}>
+                <Text style={styles.newClientLink}>＋ Ny klient</Text>
+              </Pressable>
             </View>
+            {clients.length > 5 && (
+              <TextInput
+                style={styles.search}
+                value={search}
+                onChangeText={setSearch}
+                placeholder="Søg klient…"
+                placeholderTextColor={colors.textFaint}
+                selectionColor={colors.accent}
+              />
+            )}
           </View>
         }
-        renderItem={({ item }) => (
-          <ConversationCard
-            conversation={item}
-            onPress={() =>
-              router.push(
-                item.status === 'recording'
-                  ? `/record/${item.id}`
-                  : `/conversation/${item.id}`,
-              )
-            }
-          />
-        )}
+        renderItem={({ item }) => {
+          const count = sessionCounts[item.id] ?? 0;
+          return (
+            <Pressable
+              style={({ pressed }) => [styles.clientRow, pressed && styles.clientRowPressed]}
+              onPress={() => router.push(`/client/${item.id}`)}
+            >
+              <View
+                style={[styles.avatar, { backgroundColor: speakerColorFor(item.colorIndex) }]}
+              >
+                <Text style={styles.avatarText}>
+                  {item.name.trim().slice(0, 1).toUpperCase() || '?'}
+                </Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.clientName}>{item.name}</Text>
+                <Text style={styles.clientMeta}>
+                  {count === 1 ? '1 session' : `${count} sessioner`}
+                </Text>
+              </View>
+              <Text style={styles.chevron}>›</Text>
+            </Pressable>
+          );
+        }}
         ListEmptyComponent={
           !loading ? (
             <View style={styles.empty}>
-              <View style={styles.emptyIcon}>
-                <Text style={styles.emptyGlyph}>🎙️</Text>
-              </View>
-              <Text style={styles.emptyTitle}>Ingen samtaler endnu</Text>
-              <Text style={styles.emptyBody}>
-                Start en ny samtale, tilføj hvem der er med, og optag — også med
-                slukket skærm.
+              <Text style={styles.emptyTitle}>
+                {q ? 'Ingen klienter matcher søgningen' : 'Ingen klienter endnu'}
               </Text>
+              {!q && (
+                <Text style={styles.emptyBody}>
+                  Opret din første klient - så samles alle sessioner og det
+                  samlede behandlingsoverblik i én mappe.
+                </Text>
+              )}
+            </View>
+          ) : null
+        }
+        ListFooterComponent={
+          unlinked.length > 0 ? (
+            <View>
+              <Text style={styles.sectionLabel}>UDEN KLIENT</Text>
+              <Text style={styles.unlinkedHint}>
+                Ældre samtaler uden mappe. Åbn dem og vælg en klient for at
+                flytte dem på plads.
+              </Text>
+              {unlinked.map((c) => (
+                <ConversationCard
+                  key={c.id}
+                  conversation={c}
+                  onPress={() => openConversation(c.id, c.status)}
+                />
+              ))}
             </View>
           ) : null
         }
@@ -131,8 +190,8 @@ export default function HomeScreen() {
 
       <View style={[styles.footer, { paddingBottom: insets.bottom + spacing.md }]}>
         <Button
-          label="Ny samtale"
-          onPress={() => router.push('/new')}
+          label="Ny session"
+          onPress={() => setStartSession(true)}
           icon={<Text style={styles.plus}>＋</Text>}
         />
       </View>
@@ -146,13 +205,30 @@ export default function HomeScreen() {
         }}
         onClose={() => setNewClient(false)}
       />
+
+      <ClientPickerModal
+        visible={startSession}
+        clients={clients}
+        title="Ny session"
+        subtitle="Vælg hvem sessionen handler om - eller opret en ny klient."
+        onPick={(clientId) => {
+          setStartSession(false);
+          router.push(`/new?clientId=${clientId}`);
+        }}
+        onCreate={(name) => {
+          const client = createClient(name);
+          setStartSession(false);
+          router.push(`/new?clientId=${client.id}`);
+        }}
+        onUnlink={() => {}}
+        onClose={() => setStartSession(false)}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
-  header: { marginBottom: spacing.lg },
   kicker: {
     color: colors.accentSoft,
     fontSize: font.size.xs,
@@ -166,59 +242,71 @@ const styles = StyleSheet.create({
     fontWeight: font.weight.bold,
     letterSpacing: -1,
   },
-  clientsBlock: { marginTop: spacing.lg },
-  clientsLabel: {
+  sectionLabel: {
     color: colors.textMuted,
-    fontSize: font.size.xs,
-    fontWeight: font.weight.bold,
-    letterSpacing: 2,
-    marginBottom: spacing.sm,
+    fontSize: font.size.sm,
+    fontWeight: font.weight.semibold,
+    letterSpacing: 1,
+    marginTop: spacing.xxl,
+    marginBottom: spacing.md,
   },
-  clientsRow: { gap: spacing.sm },
-  clientChip: {
+  clientsHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
   },
-  clientChipPressed: { backgroundColor: colors.surfaceHi },
-  clientChipDot: { width: 8, height: 8, borderRadius: 4 },
-  clientChipName: { color: colors.text, fontSize: font.size.sm, fontWeight: font.weight.medium },
-  newClientChip: { borderColor: colors.accent, backgroundColor: colors.accentDim },
-  newClientText: {
+  newClientLink: {
     color: colors.accentSoft,
     fontSize: font.size.sm,
     fontWeight: font.weight.semibold,
   },
-  empty: { alignItems: 'center', paddingTop: 80, paddingHorizontal: spacing.lg },
-  emptyIcon: {
-    width: 84,
-    height: 84,
-    borderRadius: radius.pill,
+  search: {
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.xl,
-  },
-  emptyGlyph: { fontSize: 36 },
-  emptyTitle: {
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.lg,
+    height: 46,
     color: colors.text,
-    fontSize: font.size.lg,
-    fontWeight: font.weight.semibold,
+    fontSize: font.size.md,
+    marginBottom: spacing.md,
+  },
+  clientRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    padding: spacing.md,
     marginBottom: spacing.sm,
   },
-  emptyBody: {
-    color: colors.textMuted,
+  clientRowPressed: { backgroundColor: colors.surfaceHi },
+  avatar: {
+    width: 40,
+    height: 40,
+    borderRadius: radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarText: { color: colors.black, fontWeight: font.weight.bold, fontSize: font.size.md },
+  clientName: { color: colors.text, fontSize: font.size.md, fontWeight: font.weight.semibold },
+  clientMeta: { color: colors.textMuted, fontSize: font.size.xs, marginTop: 2 },
+  chevron: { color: colors.textFaint, fontSize: font.size.xl },
+  empty: { paddingVertical: spacing.xl },
+  emptyTitle: {
+    color: colors.text,
     fontSize: font.size.md,
-    textAlign: 'center',
-    lineHeight: 22,
+    fontWeight: font.weight.semibold,
+    marginBottom: spacing.xs,
+  },
+  emptyBody: { color: colors.textMuted, fontSize: font.size.sm, lineHeight: 20 },
+  unlinkedHint: {
+    color: colors.textFaint,
+    fontSize: font.size.sm,
+    lineHeight: 20,
+    marginBottom: spacing.md,
   },
   footer: {
     position: 'absolute',

@@ -10,6 +10,7 @@ import {
   type TranscriptionStatus,
 } from '@/lib/transcription';
 import { useConversations } from '@/context/ConversationsContext';
+import { deleteLocalAudio } from '@/lib/audioCleanup';
 import { formatDuration } from '@/lib/format';
 import type { Conversation } from '@/lib/types';
 import { SpeakerPickerModal } from './SpeakerPickerModal';
@@ -49,18 +50,28 @@ export function TranscriptSection({ conversation }: { conversation: Conversation
       const row = await getTranscription(cid);
       if (!active) return;
       if (!row) {
-        if (!startedRef.current) begin();
+        if (audioUri) {
+          if (!startedRef.current) begin();
+        } else {
+          setStatus('error');
+          setErrMsg('Ingen lyd at transskribere.');
+        }
         return;
       }
       setSegments(row.segments ?? []);
       setLanguage(row.language);
       setErrMsg(row.error);
       setStatus(row.status);
+      // Transcript is done - the audio has served its purpose, clean it up.
+      if (row.status === 'done' && audioUri) {
+        await deleteLocalAudio(conversation);
+        update(cid, { audioUri: undefined, compressedUri: undefined });
+      }
     })();
     return () => {
       active = false;
     };
-  }, [cid, begin]);
+  }, [cid, begin, audioUri, conversation, update]);
 
   // Poll while the job is in flight.
   useEffect(() => {
@@ -74,9 +85,15 @@ export function TranscriptSection({ conversation }: { conversation: Conversation
       if (p.language != null) setLanguage(p.language);
       if (p.error) setErrMsg(p.error);
       setStatus(p.status);
-      // Mark conversation as transcribed when done
+      // Done: mark the conversation transcribed and delete the audio - the
+      // text is the documentation from here on.
       if (p.status === 'done') {
-        update(cid, { status: 'transcribed' });
+        await deleteLocalAudio(conversation);
+        update(cid, {
+          status: 'transcribed',
+          audioUri: undefined,
+          compressedUri: undefined,
+        });
       }
     };
     const interval = setInterval(tick, 4000);
@@ -105,10 +122,6 @@ export function TranscriptSection({ conversation }: { conversation: Conversation
     setPicker(null);
   };
 
-  if (!audioUri) {
-    return <Text style={styles.faint}>Ingen lyd at transskribere.</Text>;
-  }
-
   if (status === 'loading') {
     return (
       <View style={styles.center}>
@@ -135,9 +148,11 @@ export function TranscriptSection({ conversation }: { conversation: Conversation
       <View style={styles.errorBox}>
         <Text style={styles.errorTitle}>Transskriberingen gik i stå</Text>
         {errMsg ? <Text style={styles.errorBody}>{errMsg}</Text> : null}
-        <Pressable style={styles.retry} onPress={begin}>
-          <Text style={styles.retryText}>Prøv igen</Text>
-        </Pressable>
+        {audioUri ? (
+          <Pressable style={styles.retry} onPress={begin}>
+            <Text style={styles.retryText}>Prøv igen</Text>
+          </Pressable>
+        ) : null}
       </View>
     );
   }
@@ -150,9 +165,11 @@ export function TranscriptSection({ conversation }: { conversation: Conversation
         <Text style={styles.errorBody}>
           Der blev ikke fundet nogen tale i optagelsen.
         </Text>
-        <Pressable style={styles.retry} onPress={begin}>
-          <Text style={styles.retryText}>Prøv igen</Text>
-        </Pressable>
+        {audioUri ? (
+          <Pressable style={styles.retry} onPress={begin}>
+            <Text style={styles.retryText}>Prøv igen</Text>
+          </Pressable>
+        ) : null}
       </View>
     );
   }

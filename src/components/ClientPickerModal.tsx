@@ -9,6 +9,8 @@ interface Props {
   currentClientId?: string;
   /** Participant names from the conversation - offered as one-tap creates. */
   suggestions?: string[];
+  title?: string;
+  subtitle?: string;
   onPick: (clientId: string) => void;
   onCreate: (name: string) => void;
   onUnlink: () => void;
@@ -21,6 +23,8 @@ export function ClientPickerModal({
   clients,
   currentClientId,
   suggestions,
+  title,
+  subtitle,
   onPick,
   onCreate,
   onUnlink,
@@ -46,9 +50,10 @@ export function ClientPickerModal({
       <Pressable style={styles.backdrop} onPress={onClose}>
         <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
           <View style={styles.handle} />
-          <Text style={styles.title}>Hvilken klient hører samtalen til?</Text>
+          <Text style={styles.title}>{title ?? 'Hvilken klient hører samtalen til?'}</Text>
           <Text style={styles.subtitle}>
-            Sessionen lægges i klientens mappe, hvor det samlede behandlingsoverblik bor.
+            {subtitle ??
+              'Sessionen lægges i klientens mappe, hvor det samlede behandlingsoverblik bor.'}
           </Text>
 
           <View style={styles.list}>

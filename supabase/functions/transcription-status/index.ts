@@ -96,6 +96,30 @@ Deno.serve(async (req) => {
         .eq('user_id', user.id)
         .eq('conversation_id', conversationId);
 
+      // The transcript is stored - delete the audio so no large, sensitive
+      // recordings linger in storage.
+      if (row.audio_path) {
+        const { error: rmErr } = await admin.storage
+          .from('recordings')
+          .remove([row.audio_path]);
+        if (rmErr) {
+          console.warn('[transcription-status] audio delete failed', {
+            conversationId,
+            path: row.audio_path,
+            error: rmErr.message,
+          });
+        } else {
+          await admin
+            .from('transcriptions')
+            .update({ audio_path: null })
+            .eq('user_id', user.id)
+            .eq('conversation_id', conversationId);
+          console.log('[transcription-status] audio deleted after transcription', {
+            conversationId,
+          });
+        }
+      }
+
       return json({ status: 'done', segments, language });
     }
 

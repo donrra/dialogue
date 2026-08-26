@@ -20,10 +20,12 @@ const STATUS_COLOR: Record<ConversationStatus, string> = {
 
 interface CardProps {
   conversation: Conversation;
+  /** Name of the client folder this session belongs to, if any. */
+  clientName?: string;
   onPress: () => void;
 }
 
-export function ConversationCard({ conversation, onPress }: CardProps) {
+export function ConversationCard({ conversation, clientName, onPress }: CardProps) {
   const { title, createdAt, durationMs, participants, status } = conversation;
 
   return (
@@ -46,6 +48,7 @@ export function ConversationCard({ conversation, onPress }: CardProps) {
       <Text style={styles.meta}>
         {formatDate(createdAt)}
         {durationMs ? `  ·  ${formatDuration(durationMs)}` : ''}
+        {clientName ? `  ·  ${clientName}` : ''}
       </Text>
 
       <View style={styles.avatars}>
