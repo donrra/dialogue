@@ -1,9 +1,10 @@
 import React, { useEffect } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors, font, radius, spacing } from '@/theme/theme';
+import { colors, font, radius, spacing, speakerColorFor } from '@/theme/theme';
 import { useConversations } from '@/context/ConversationsContext';
+import { useClients } from '@/context/ClientsContext';
 import { useRecording } from '@/context/RecordingContext';
 import { getTranscription } from '@/lib/transcription';
 import { Button } from '@/components/Button';
@@ -14,6 +15,7 @@ export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { conversations, loading, update } = useConversations();
+  const { clients } = useClients();
   const { activeConversationId } = useRecording();
 
   // Poll transcription status while on screen
@@ -56,6 +58,35 @@ export default function HomeScreen() {
               <LiveBanner
                 onPress={() => router.push(`/record/${activeConversationId}`)}
               />
+            )}
+            {clients.length > 0 && (
+              <View style={styles.clientsBlock}>
+                <Text style={styles.clientsLabel}>KLIENTER</Text>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.clientsRow}
+                >
+                  {clients.map((c) => (
+                    <Pressable
+                      key={c.id}
+                      style={({ pressed }) => [
+                        styles.clientChip,
+                        pressed && styles.clientChipPressed,
+                      ]}
+                      onPress={() => router.push(`/client/${c.id}`)}
+                    >
+                      <View
+                        style={[
+                          styles.clientChipDot,
+                          { backgroundColor: speakerColorFor(c.colorIndex) },
+                        ]}
+                      />
+                      <Text style={styles.clientChipName}>{c.name}</Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              </View>
             )}
           </View>
         }
@@ -115,6 +146,29 @@ const styles = StyleSheet.create({
     fontWeight: font.weight.bold,
     letterSpacing: -1,
   },
+  clientsBlock: { marginTop: spacing.lg },
+  clientsLabel: {
+    color: colors.textMuted,
+    fontSize: font.size.xs,
+    fontWeight: font.weight.bold,
+    letterSpacing: 2,
+    marginBottom: spacing.sm,
+  },
+  clientsRow: { gap: spacing.sm },
+  clientChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  clientChipPressed: { backgroundColor: colors.surfaceHi },
+  clientChipDot: { width: 8, height: 8, borderRadius: 4 },
+  clientChipName: { color: colors.text, fontSize: font.size.sm, fontWeight: font.weight.medium },
   empty: { alignItems: 'center', paddingTop: 80, paddingHorizontal: spacing.lg },
   emptyIcon: {
     width: 84,

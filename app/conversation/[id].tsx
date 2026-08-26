@@ -1,20 +1,24 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors, font, radius, spacing } from '@/theme/theme';
+import { colors, font, radius, spacing, speakerColorFor } from '@/theme/theme';
 import { useConversations } from '@/context/ConversationsContext';
+import { useClients } from '@/context/ClientsContext';
 import { ParticipantChip } from '@/components/ParticipantChip';
 import { AudioPlayerBar } from '@/components/AudioPlayerBar';
 import { TranscriptSection } from '@/components/TranscriptSection';
 import { AnalysisSection } from '@/components/AnalysisSection';
+import { ClientPickerModal } from '@/components/ClientPickerModal';
 import { formatBytes, formatDate, formatDuration } from '@/lib/format';
 
 export default function ConversationDetailScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { getById, remove } = useConversations();
+  const { getById, remove, update } = useConversations();
+  const { clients, getById: getClient, create: createClient } = useClients();
+  const [clientPicker, setClientPicker] = useState(false);
   const conversation = getById(id);
 
   if (!conversation) {
@@ -78,6 +82,47 @@ export default function ConversationDetailScreen() {
           )}
         </View>
 
+        {/* Klient-mappe: which patient folder this session belongs to */}
+        <Text style={styles.sectionLabel}>Klient</Text>
+        {(() => {
+          const client = conversation.clientId
+            ? getClient(conversation.clientId)
+            : undefined;
+          return (
+            <Pressable
+              style={({ pressed }) => [styles.clientRow, pressed && styles.clientRowPressed]}
+              onPress={() => setClientPicker(true)}
+            >
+              {client ? (
+                <>
+                  <View
+                    style={[
+                      styles.clientDot,
+                      { backgroundColor: speakerColorFor(client.colorIndex) },
+                    ]}
+                  />
+                  <Text style={styles.clientName}>{client.name}</Text>
+                  <Text style={styles.clientHint}>· åbn mappe eller skift</Text>
+                </>
+              ) : (
+                <Text style={styles.clientEmpty}>
+                  Vælg klient - så samles sessionerne i én mappe
+                </Text>
+              )}
+            </Pressable>
+          );
+        })()}
+        {conversation.clientId && getClient(conversation.clientId) && (
+          <Pressable
+            style={styles.openFolder}
+            onPress={() => router.push(`/client/${conversation.clientId}`)}
+          >
+            <Text style={styles.openFolderText}>
+              Åbn {getClient(conversation.clientId)!.name}s mappe ›
+            </Text>
+          </Pressable>
+        )}
+
         {/* Fase 2 — transcript */}
         <Text style={styles.sectionLabel}>Transskribering</Text>
         <TranscriptSection conversation={conversation} />
@@ -86,6 +131,26 @@ export default function ConversationDetailScreen() {
         <Text style={styles.sectionLabel}>Analyse</Text>
         <AnalysisSection conversation={conversation} />
       </ScrollView>
+
+      <ClientPickerModal
+        visible={clientPicker}
+        clients={clients}
+        currentClientId={conversation.clientId}
+        onPick={(clientId) => {
+          update(id, { clientId });
+          setClientPicker(false);
+        }}
+        onCreate={(name) => {
+          const client = createClient(name);
+          update(id, { clientId: client.id });
+          setClientPicker(false);
+        }}
+        onUnlink={() => {
+          update(id, { clientId: undefined });
+          setClientPicker(false);
+        }}
+        onClose={() => setClientPicker(false)}
+      />
     </View>
   );
 }
@@ -121,6 +186,27 @@ const styles = StyleSheet.create({
   },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   faint: { color: colors.textFaint, fontSize: font.size.sm },
+  clientRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    padding: spacing.md,
+  },
+  clientRowPressed: { backgroundColor: colors.surfaceHi },
+  clientDot: { width: 10, height: 10, borderRadius: 5 },
+  clientName: { color: colors.text, fontSize: font.size.md, fontWeight: font.weight.semibold },
+  clientHint: { color: colors.textFaint, fontSize: font.size.xs },
+  clientEmpty: { color: colors.textMuted, fontSize: font.size.sm },
+  openFolder: { marginTop: spacing.sm, paddingVertical: spacing.xs },
+  openFolderText: {
+    color: colors.accentSoft,
+    fontSize: font.size.sm,
+    fontWeight: font.weight.semibold,
+  },
   placeholder: {
     backgroundColor: colors.surface,
     borderWidth: 1,

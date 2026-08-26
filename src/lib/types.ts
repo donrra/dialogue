@@ -8,6 +8,18 @@ export interface Participant {
   colorIndex: number;
 }
 
+/**
+ * A client (patient) whose sessions are collected in a folder: per-session
+ * journal notes plus an AI-maintained treatment overview.
+ */
+export interface Client {
+  id: string;
+  name: string;
+  /** Index into the speaker color palette — stable color per client. */
+  colorIndex: number;
+  createdAt: number; // epoch ms
+}
+
 export type ConversationStatus =
   | 'recording' // currently being recorded
   | 'recorded' // audio captured, not yet transcribed (Fase 2)
@@ -34,4 +46,7 @@ export interface Conversation {
    * Kept on the conversation so the mapping survives re-transcription.
    */
   speakerNames?: Record<string, string>;
+
+  /** The client (patient) this session belongs to, if assigned. */
+  clientId?: string;
 }

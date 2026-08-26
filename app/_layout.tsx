@@ -3,6 +3,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Stack } from 'expo-router';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { ClientsProvider } from '@/context/ClientsContext';
 import { ConversationsProvider } from '@/context/ConversationsContext';
 import { RecordingProvider } from '@/context/RecordingContext';
 import { ensureSession } from '@/lib/supabase';
@@ -17,6 +18,7 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.bg }}>
       <SafeAreaProvider>
+        <ClientsProvider>
         <ConversationsProvider>
           <RecordingProvider>
             <StatusBar style="light" />
@@ -31,9 +33,11 @@ export default function RootLayout() {
               <Stack.Screen name="new" options={{ animation: 'slide_from_bottom' }} />
               <Stack.Screen name="record/[id]" options={{ gestureEnabled: false }} />
               <Stack.Screen name="conversation/[id]" />
+              <Stack.Screen name="client/[id]" />
             </Stack>
           </RecordingProvider>
         </ConversationsProvider>
+        </ClientsProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
