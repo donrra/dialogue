@@ -15,6 +15,7 @@ import { useClients } from '@/context/ClientsContext';
 import { useConversations } from '@/context/ConversationsContext';
 import { runOverview, getOverview, type OverviewResult } from '@/lib/overview';
 import { formatDate } from '@/lib/format';
+import { Button } from '@/components/Button';
 
 const OVERVIEW_FIELDS = [
   { label: 'Forløb', key: 'forlob' },
@@ -120,7 +121,7 @@ export default function ClientFolderScreen() {
       </View>
 
       <ScrollView
-        contentContainerStyle={{ padding: spacing.xl, paddingBottom: insets.bottom + 40 }}
+        contentContainerStyle={{ padding: spacing.xl, paddingBottom: 130 }}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.titleRow}>
@@ -185,7 +186,7 @@ export default function ClientFolderScreen() {
         <Text style={styles.sectionLabel}>Sessioner</Text>
         {sessions.length === 0 ? (
           <Text style={styles.faint}>
-            Ingen sessioner endnu. Åbn en samtale og vælg {client.name} som klient.
+            Ingen sessioner endnu. Tryk "Ny session" for at starte den første.
           </Text>
         ) : (
           <View style={styles.sessionList}>
@@ -206,6 +207,14 @@ export default function ClientFolderScreen() {
           </View>
         )}
       </ScrollView>
+
+      <View style={[styles.footer, { paddingBottom: insets.bottom + spacing.md }]}>
+        <Button
+          label="Ny session"
+          onPress={() => router.push(`/new?clientId=${client.id}`)}
+          icon={<Text style={styles.plus}>＋</Text>}
+        />
+      </View>
     </View>
   );
 }
@@ -322,4 +331,16 @@ const styles = StyleSheet.create({
   sessionTitle: { color: colors.text, fontSize: font.size.md, fontWeight: font.weight.medium },
   sessionDate: { color: colors.textMuted, fontSize: font.size.xs, marginTop: 2 },
   chevron: { color: colors.textFaint, fontSize: font.size.xl },
+  footer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingHorizontal: spacing.xl,
+    paddingTop: spacing.md,
+    backgroundColor: colors.bg,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  plus: { color: colors.white, fontSize: font.size.lg, fontWeight: font.weight.bold },
 });

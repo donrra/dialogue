@@ -7,6 +7,8 @@ interface Props {
   visible: boolean;
   clients: Client[];
   currentClientId?: string;
+  /** Participant names from the conversation - offered as one-tap creates. */
+  suggestions?: string[];
   onPick: (clientId: string) => void;
   onCreate: (name: string) => void;
   onUnlink: () => void;
@@ -18,6 +20,7 @@ export function ClientPickerModal({
   visible,
   clients,
   currentClientId,
+  suggestions,
   onPick,
   onCreate,
   onUnlink,
@@ -31,6 +34,12 @@ export function ClientPickerModal({
     setNewName('');
     onCreate(name);
   };
+
+  // Only suggest names that aren't already clients.
+  const existingNames = new Set(clients.map((c) => c.name.trim().toLowerCase()));
+  const quickCreates = (suggestions ?? [])
+    .map((n) => n.trim())
+    .filter((n) => n && !existingNames.has(n.toLowerCase()));
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -68,6 +77,20 @@ export function ClientPickerModal({
               );
             })}
           </View>
+
+          {quickCreates.length > 0 && (
+            <View style={styles.suggestBlock}>
+              {quickCreates.map((n) => (
+                <Pressable
+                  key={n}
+                  style={({ pressed }) => [styles.suggestBtn, pressed && styles.rowPressed]}
+                  onPress={() => onCreate(n)}
+                >
+                  <Text style={styles.suggestText}>Opret "{n}" som klient</Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
 
           <View style={styles.createRow}>
             <TextInput
@@ -148,6 +171,20 @@ const styles = StyleSheet.create({
   avatarText: { color: colors.black, fontWeight: font.weight.bold, fontSize: font.size.md },
   rowName: { color: colors.text, fontSize: font.size.md, fontWeight: font.weight.medium, flex: 1 },
   check: { color: colors.accentSoft, fontSize: font.size.md, fontWeight: font.weight.bold },
+  suggestBlock: { gap: spacing.sm, marginTop: spacing.lg },
+  suggestBtn: {
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.accentDim,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    alignItems: 'center',
+  },
+  suggestText: {
+    color: colors.accentSoft,
+    fontSize: font.size.sm,
+    fontWeight: font.weight.semibold,
+  },
   createRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.lg },
   input: {
     flex: 1,

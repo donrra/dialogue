@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -10,13 +10,15 @@ import { getTranscription } from '@/lib/transcription';
 import { Button } from '@/components/Button';
 import { ConversationCard } from '@/components/ConversationCard';
 import { LiveBanner } from '@/components/LiveBanner';
+import { NewClientModal } from '@/components/NewClientModal';
 
 export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { conversations, loading, update } = useConversations();
-  const { clients } = useClients();
+  const { clients, create: createClient } = useClients();
   const { activeConversationId } = useRecording();
+  const [newClient, setNewClient] = useState(false);
 
   // Poll transcription status while on screen
   useFocusEffect(
@@ -59,35 +61,43 @@ export default function HomeScreen() {
                 onPress={() => router.push(`/record/${activeConversationId}`)}
               />
             )}
-            {clients.length > 0 && (
-              <View style={styles.clientsBlock}>
-                <Text style={styles.clientsLabel}>KLIENTER</Text>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.clientsRow}
-                >
-                  {clients.map((c) => (
-                    <Pressable
-                      key={c.id}
-                      style={({ pressed }) => [
-                        styles.clientChip,
-                        pressed && styles.clientChipPressed,
+            <View style={styles.clientsBlock}>
+              <Text style={styles.clientsLabel}>KLIENTER</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.clientsRow}
+              >
+                {clients.map((c) => (
+                  <Pressable
+                    key={c.id}
+                    style={({ pressed }) => [
+                      styles.clientChip,
+                      pressed && styles.clientChipPressed,
+                    ]}
+                    onPress={() => router.push(`/client/${c.id}`)}
+                  >
+                    <View
+                      style={[
+                        styles.clientChipDot,
+                        { backgroundColor: speakerColorFor(c.colorIndex) },
                       ]}
-                      onPress={() => router.push(`/client/${c.id}`)}
-                    >
-                      <View
-                        style={[
-                          styles.clientChipDot,
-                          { backgroundColor: speakerColorFor(c.colorIndex) },
-                        ]}
-                      />
-                      <Text style={styles.clientChipName}>{c.name}</Text>
-                    </Pressable>
-                  ))}
-                </ScrollView>
-              </View>
-            )}
+                    />
+                    <Text style={styles.clientChipName}>{c.name}</Text>
+                  </Pressable>
+                ))}
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.clientChip,
+                    styles.newClientChip,
+                    pressed && styles.clientChipPressed,
+                  ]}
+                  onPress={() => setNewClient(true)}
+                >
+                  <Text style={styles.newClientText}>＋ Ny klient</Text>
+                </Pressable>
+              </ScrollView>
+            </View>
           </View>
         }
         renderItem={({ item }) => (
@@ -126,6 +136,16 @@ export default function HomeScreen() {
           icon={<Text style={styles.plus}>＋</Text>}
         />
       </View>
+
+      <NewClientModal
+        visible={newClient}
+        onCreate={(name) => {
+          const client = createClient(name);
+          setNewClient(false);
+          router.push(`/client/${client.id}`);
+        }}
+        onClose={() => setNewClient(false)}
+      />
     </View>
   );
 }
@@ -169,6 +189,12 @@ const styles = StyleSheet.create({
   clientChipPressed: { backgroundColor: colors.surfaceHi },
   clientChipDot: { width: 8, height: 8, borderRadius: 4 },
   clientChipName: { color: colors.text, fontSize: font.size.sm, fontWeight: font.weight.medium },
+  newClientChip: { borderColor: colors.accent, backgroundColor: colors.accentDim },
+  newClientText: {
+    color: colors.accentSoft,
+    fontSize: font.size.sm,
+    fontWeight: font.weight.semibold,
+  },
   empty: { alignItems: 'center', paddingTop: 80, paddingHorizontal: spacing.lg },
   emptyIcon: {
     width: 84,

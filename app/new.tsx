@@ -9,28 +9,37 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { colors, font, radius, spacing } from '@/theme/theme';
 import { Button } from '@/components/Button';
 import { ParticipantChip } from '@/components/ParticipantChip';
 import { useConversations } from '@/context/ConversationsContext';
+import { useClients } from '@/context/ClientsContext';
 import { makeId } from '@/lib/id';
 import type { Participant } from '@/lib/types';
 
-function defaultTitle(): string {
+function defaultTitle(prefix: string): string {
   const now = new Date();
-  return `Samtale ${now.toLocaleDateString('da-DK', { day: 'numeric', month: 'short' })}`;
+  return `${prefix} ${now.toLocaleDateString('da-DK', { day: 'numeric', month: 'short' })}`;
 }
 
 export default function NewConversationScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { upsert } = useConversations();
+  const { getById: getClient } = useClients();
 
-  const [title, setTitle] = useState(defaultTitle());
-  const [participants, setParticipants] = useState<Participant[]>([]);
+  // Started from a client folder? Then the session is linked from birth and
+  // the client is already a participant - no retyping of names.
+  const { clientId } = useLocalSearchParams<{ clientId?: string }>();
+  const client = clientId ? getClient(clientId) : undefined;
+
+  const [title, setTitle] = useState(defaultTitle(client ? 'Session' : 'Samtale'));
+  const [participants, setParticipants] = useState<Participant[]>(
+    client ? [{ id: makeId('p_'), name: client.name, colorIndex: 0 }] : [],
+  );
   const [name, setName] = useState('');
 
   const addParticipant = () => {
@@ -52,10 +61,11 @@ export default function NewConversationScreen() {
     const id = makeId('c_');
     upsert({
       id,
-      title: title.trim() || defaultTitle(),
+      title: title.trim() || defaultTitle(client ? 'Session' : 'Samtale'),
       createdAt: Date.now(),
       status: 'recording',
       participants,
+      clientId: client?.id,
     });
     router.replace(`/record/${id}?autostart=1`);
   };
@@ -69,7 +79,9 @@ export default function NewConversationScreen() {
         <Pressable onPress={() => router.back()} hitSlop={12} style={styles.close}>
           <Text style={styles.closeText}>✕</Text>
         </Pressable>
-        <Text style={styles.headerTitle}>Ny samtale</Text>
+        <Text style={styles.headerTitle}>
+          {client ? `Ny session · ${client.name}` : 'Ny samtale'}
+        </Text>
         <View style={{ width: 32 }} />
       </View>
 

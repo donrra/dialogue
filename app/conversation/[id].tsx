@@ -136,6 +136,7 @@ export default function ConversationDetailScreen() {
         visible={clientPicker}
         clients={clients}
         currentClientId={conversation.clientId}
+        suggestions={conversation.participants.map((p) => p.name)}
         onPick={(clientId) => {
           update(id, { clientId });
           setClientPicker(false);
