@@ -74,13 +74,17 @@ export function TranscriptSection({ conversation }: { conversation: Conversation
       if (p.language != null) setLanguage(p.language);
       if (p.error) setErrMsg(p.error);
       setStatus(p.status);
+      // Mark conversation as transcribed when done
+      if (p.status === 'done') {
+        update(cid, { status: 'transcribed' });
+      }
     };
     const interval = setInterval(tick, 4000);
     return () => {
       active = false;
       clearInterval(interval);
     };
-  }, [status, cid]);
+  }, [status, cid, update]);
 
   // Stable color per distinct speaker label, in order of appearance.
   const speakerColorIndex = useMemo(() => {
@@ -156,6 +160,7 @@ export function TranscriptSection({ conversation }: { conversation: Conversation
   return (
     <View>
       {language ? <Text style={styles.langHint}>Sprog: {language}</Text> : null}
+      <Text style={styles.hintText}>💡 Klik på "Taler 1" eller "Taler 2" for at linke til deltagernes navne</Text>
 
       <View style={styles.thread}>
         {segments.map((seg, i) => {
@@ -200,6 +205,7 @@ export function TranscriptSection({ conversation }: { conversation: Conversation
 
 const styles = StyleSheet.create({
   faint: { color: colors.textFaint, fontSize: font.size.sm },
+  hintText: { color: colors.textMuted, fontSize: font.size.sm, marginBottom: spacing.md, fontStyle: 'italic' },
   center: { paddingVertical: spacing.xl, alignItems: 'center' },
   processing: {
     backgroundColor: colors.surface,
