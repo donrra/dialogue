@@ -15,13 +15,14 @@ export async function runAnalysis(
   conversationId: string,
   type: AnalysisType,
   speakerNames?: Record<string, string>,
+  sessionDate?: string,
 ): Promise<AnalysisResult> {
   const uid = await ensureSession();
   if (!uid) throw new Error('Ingen forbindelse til serveren.');
 
   const fnName = `analyze-${type}`;
   const { data, error } = await supabase.functions.invoke(fnName, {
-    body: { conversationId, speakerNames },
+    body: { conversationId, speakerNames, sessionDate },
   });
 
   console.log('[analysis] response from edge function:', { fnName, data, error: error?.message });

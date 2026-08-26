@@ -69,7 +69,12 @@ export function AnalysisSection({ conversation }: { conversation: Conversation }
       setRunning(type);
       setError(null);
       try {
-        const result = await runAnalysis(cid, type, conversation.speakerNames);
+        const result = await runAnalysis(
+          cid,
+          type,
+          conversation.speakerNames,
+          new Date(conversation.createdAt).toISOString(),
+        );
         setResults((prev) => ({ ...prev, [type]: result }));
       } catch (e: any) {
         setError(e?.message ?? 'Analysen gik i stå');
@@ -77,7 +82,7 @@ export function AnalysisSection({ conversation }: { conversation: Conversation }
         setRunning(null);
       }
     },
-    [cid, conversation.speakerNames],
+    [cid, conversation.speakerNames, conversation.createdAt],
   );
 
   // Only show psykolog for now (others are placeholders)

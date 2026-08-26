@@ -48,8 +48,22 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
 
   try {
-    const { conversationId, speakerNames } = await req.json();
+    const { conversationId, speakerNames, sessionDate } = await req.json();
     if (!conversationId) return json({ error: 'missing conversationId' }, 400);
+
+    // The recording date is a fact the app knows - format it in Danish here so
+    // the model never has to guess the "Dato" field.
+    let sessionDateText: string | null = null;
+    if (typeof sessionDate === 'string') {
+      const d = new Date(sessionDate);
+      if (!isNaN(d.getTime())) {
+        sessionDateText = d.toLocaleDateString('da-DK', {
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric',
+        });
+      }
+    }
 
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
     const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -163,7 +177,9 @@ Hvis et element ikke kan identificeres fra samtalen, skriv "[Ikke dokumenteret]"
       messages: [
         {
           role: 'user',
-          content: `Analyser denne transskriberede samtale og producer et STPS-kompatibelt journalnotat:\n\n${transcript}`,
+          content:
+            (sessionDateText ? `Sessionens dato: ${sessionDateText}\n\n` : '') +
+            `Analyser denne transskriberede samtale og producer et STPS-kompatibelt journalnotat:\n\n${transcript}`,
         },
       ],
     };
@@ -235,6 +251,12 @@ Hvis et element ikke kan identificeres fra samtalen, skriv "[Ikke dokumenteret]"
         textPreview: analysisText.slice(0, 300),
       });
       return json({ error: 'AI-svaret kunne ikke læses. Prøv igen.' }, 502);
+    }
+
+    // The date comes from the recording metadata, so it always wins over
+    // whatever the model put in the field.
+    if (sessionDateText) {
+      analysis.datum = sessionDateText;
     }
 
     // Store result as "psykolog" analysis
