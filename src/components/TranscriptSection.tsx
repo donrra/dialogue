@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { colors, font, radius, spacing, speakerColorFor } from '@/theme/theme';
 import {
@@ -7,12 +7,14 @@ import {
   getTranscription,
   refreshTranscription,
   retranscribe,
+  saveSegments,
   startTranscription,
   type TranscriptSegment,
   type TranscriptionStatus,
 } from '@/lib/transcription';
 import { DEFAULT_LANGUAGES, languageSummary } from '@/lib/languages';
 import { LanguagePickerModal } from './LanguagePickerModal';
+import { SegmentEditModal } from './SegmentEditModal';
 import { useConversations } from '@/context/ConversationsContext';
 import { useClients } from '@/context/ClientsContext';
 import { deleteLocalAudio } from '@/lib/audioCleanup';
@@ -47,6 +49,8 @@ export function TranscriptSection({ conversation }: { conversation: Conversation
   const [errMsg, setErrMsg] = useState<string | null>(null);
   const [picker, setPicker] = useState<string | null>(null);
   const [langPicker, setLangPicker] = useState(false);
+  /** Index of the line being corrected, or null when nothing is open. */
+  const [editIndex, setEditIndex] = useState<number | null>(null);
   /** Storage path of the recording, or null once it has been swept. */
   const [audioPath, setAudioPath] = useState<string | null>(null);
   const [createdAt, setCreatedAt] = useState<string | null>(null);
@@ -80,6 +84,25 @@ export function TranscriptSection({ conversation }: { conversation: Conversation
   const runAgain = useCallback(
     async (nextLanguages: string[]) => {
       setLangPicker(false);
+
+      // A re-run replaces the whole transcript, so any hand-corrected lines go
+      // with it. Losing that work silently would be the worst outcome here.
+      const editCount = segments.filter((seg) => seg.edited).length;
+      if (editCount > 0) {
+        const confirmed = await new Promise<boolean>((resolve) => {
+          Alert.alert(
+            'Dine rettelser går tabt',
+            `Du har rettet ${editCount === 1 ? 'én linje' : `${editCount} linjer`} i teksten. En ny transskribering laver hele teksten forfra, så rettelserne forsvinder.`,
+            [
+              { text: 'Behold teksten', style: 'cancel', onPress: () => resolve(false) },
+              { text: 'Lav om alligevel', style: 'destructive', onPress: () => resolve(true) },
+            ],
+            { cancelable: true, onDismiss: () => resolve(false) },
+          );
+        });
+        if (!confirmed) return;
+      }
+
       update(cid, { languages: nextLanguages });
       // Correcting the languages here is also a correction of the client: if
       // this session turned out to be Danish plus Urdu, the next one will be
@@ -102,7 +125,16 @@ export function TranscriptSection({ conversation }: { conversation: Conversation
         setErrMsg(e?.message ?? 'Kunne ikke starte transskriberingen igen.');
       }
     },
-    [audioPath, cid, update, updateClient, conversation.clientId, vocabulary, expectedSpeakers],
+    [
+      audioPath,
+      cid,
+      segments,
+      update,
+      updateClient,
+      conversation.clientId,
+      vocabulary,
+      expectedSpeakers,
+    ],
   );
 
   // Initial load: resume an existing job or kick one off.
@@ -178,6 +210,53 @@ export function TranscriptSection({ conversation }: { conversation: Conversation
   }, [segments]);
 
   const displayName = (label: string) => conversation.speakerNames?.[label] ?? label;
+
+  /**
+   * Writes a corrected line back, optimistically. The analysis reads these
+   * segments, so this is what the journal note will be built from - if the save
+   * fails we put the old text back rather than let the screen lie about it.
+   */
+  const applyEdit = useCallback(
+    async (index: number, next: TranscriptSegment) => {
+      const previous = segments;
+      const updated = segments.map((seg, i) => (i === index ? next : seg));
+      setSegments(updated);
+      setEditIndex(null);
+      try {
+        await saveSegments(cid, updated);
+      } catch (e: any) {
+        setSegments(previous);
+        Alert.alert(
+          'Rettelsen blev ikke gemt',
+          e?.message ?? 'Prøv igen når du har forbindelse.',
+        );
+      }
+    },
+    [cid, segments],
+  );
+
+  const saveEdit = (text: string) => {
+    if (editIndex === null) return;
+    const seg = segments[editIndex];
+    if (!seg) return;
+    Haptics.selectionAsync();
+    applyEdit(editIndex, {
+      ...seg,
+      text,
+      edited: true,
+      // Keep the very first machine wording, not the previous correction.
+      original: seg.original ?? seg.text,
+    });
+  };
+
+  const revertEdit = () => {
+    if (editIndex === null) return;
+    const seg = segments[editIndex];
+    if (!seg?.original) return;
+    Haptics.selectionAsync();
+    const { original, ...rest } = seg;
+    applyEdit(editIndex, { ...rest, text: original, edited: false });
+  };
 
   const assignSpeaker = (label: string, name: string | null) => {
     Haptics.selectionAsync();
@@ -308,7 +387,10 @@ export function TranscriptSection({ conversation }: { conversation: Conversation
   return (
     <View>
       {languageBar}
-      <Text style={styles.hintText}>💡 Klik på "Taler 1" eller "Taler 2" for at linke til deltagernes navne</Text>
+      <Text style={styles.hintText}>
+        💡 Tryk på en taler for at give den et navn. Tryk på selve teksten for at
+        rette det der er hørt forkert.
+      </Text>
 
       <View style={styles.thread}>
         {segments.map((seg, i) => {
@@ -331,9 +413,20 @@ export function TranscriptSection({ conversation }: { conversation: Conversation
                   <Text style={styles.time}>{formatDuration(seg.start * 1000)}</Text>
                 </Pressable>
               )}
-              <View style={[styles.bubble, { borderLeftColor: color }]}>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.bubble,
+                  { borderLeftColor: color },
+                  pressed && styles.bubblePressed,
+                ]}
+                onPress={() => {
+                  Haptics.selectionAsync();
+                  setEditIndex(i);
+                }}
+              >
                 <Text style={styles.bubbleText}>{seg.text}</Text>
-              </View>
+                {seg.edited ? <Text style={styles.editedTag}>rettet</Text> : null}
+              </Pressable>
             </View>
           );
         })}
@@ -348,6 +441,16 @@ export function TranscriptSection({ conversation }: { conversation: Conversation
         onClose={() => setPicker(null)}
       />
       {langModal}
+
+      <SegmentEditModal
+        segment={editIndex === null ? null : (segments[editIndex] ?? null)}
+        speakerName={
+          editIndex === null ? '' : displayName(segments[editIndex]?.speaker ?? '')
+        }
+        onSave={saveEdit}
+        onRevert={revertEdit}
+        onClose={() => setEditIndex(null)}
+      />
     </View>
   );
 }
@@ -425,5 +528,12 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     padding: spacing.md,
   },
+  bubblePressed: { backgroundColor: colors.surfaceHi },
   bubbleText: { color: colors.text, fontSize: font.size.md, lineHeight: 23 },
+  editedTag: {
+    color: colors.textFaint,
+    fontSize: font.size.xs,
+    marginTop: spacing.xs,
+    fontStyle: 'italic',
+  },
 });

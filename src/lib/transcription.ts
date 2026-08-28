@@ -26,6 +26,10 @@ export interface TranscriptSegment {
   language?: string;
   /** 0-1 certainty from Gladia; low values mark passages worth re-reading. */
   confidence?: number;
+  /** True once a human has corrected this line. */
+  edited?: boolean;
+  /** What the machine originally heard, kept so a correction can be undone. */
+  original?: string;
 }
 
 /** Extra context that measurably improves the transcript. */
@@ -119,6 +123,31 @@ export async function startTranscription(
     throw new Error(msg);
   }
   console.log('[transcription] started', { conversationId });
+}
+
+/**
+ * Saves a corrected transcript. The whole segment list is written back, which is
+ * cheap at these sizes and keeps the stored order authoritative.
+ *
+ * This is the last word on what the session said: the analysis reads these
+ * segments, so a correction here flows straight into the journal note.
+ */
+export async function saveSegments(
+  conversationId: string,
+  segments: TranscriptSegment[],
+): Promise<void> {
+  const uid = await ensureSession();
+  if (!uid) throw new Error('Ingen forbindelse til serveren. Prøv igen.');
+
+  const { error } = await supabase
+    .from('transcriptions')
+    .update({ segments })
+    .eq('user_id', uid)
+    .eq('conversation_id', conversationId);
+  if (error) {
+    console.warn('[transcription] saving edit failed', { conversationId, message: error.message });
+    throw new Error(`Rettelsen blev ikke gemt: ${error.message}`);
+  }
 }
 
 /**
