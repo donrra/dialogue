@@ -17,6 +17,8 @@ import { Button } from '@/components/Button';
 import { ParticipantChip } from '@/components/ParticipantChip';
 import { useConversations } from '@/context/ConversationsContext';
 import { useClients } from '@/context/ClientsContext';
+import { LanguagePickerModal } from '@/components/LanguagePickerModal';
+import { DEFAULT_LANGUAGES, languageSummary } from '@/lib/languages';
 import { makeId } from '@/lib/id';
 import type { Participant } from '@/lib/types';
 
@@ -29,7 +31,7 @@ export default function NewConversationScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { upsert } = useConversations();
-  const { getById: getClient } = useClients();
+  const { getById: getClient, update: updateClient } = useClients();
 
   // Started from a client folder? Then the session is linked from birth and
   // the client is already a participant - no retyping of names.
@@ -41,6 +43,21 @@ export default function NewConversationScreen() {
     client ? [{ id: makeId('p_'), name: client.name, colorIndex: 0 }] : [],
   );
   const [name, setName] = useState('');
+
+  // A client speaks the same languages every session, so the folder remembers
+  // them. Getting this right up front is what decides whether the transcript is
+  // usable at all: anything not on this list comes back as nonsense.
+  const [languages, setLanguages] = useState<string[]>(
+    client?.languages?.length ? client.languages : DEFAULT_LANGUAGES,
+  );
+  const [langPicker, setLangPicker] = useState(false);
+
+  const pickLanguages = (codes: string[]) => {
+    setLanguages(codes);
+    setLangPicker(false);
+    // Remember it on the client so the next session starts out right.
+    if (client) updateClient(client.id, { languages: codes });
+  };
 
   const addParticipant = () => {
     const trimmed = name.trim();
@@ -66,6 +83,7 @@ export default function NewConversationScreen() {
       status: 'recording',
       participants,
       clientId: client?.id,
+      languages,
     });
     router.replace(`/record/${id}?autostart=1`);
   };
@@ -131,11 +149,35 @@ export default function NewConversationScreen() {
             ))}
           </View>
         )}
+
+        <Text style={[styles.label, { marginTop: spacing.xl }]}>Talt sprog</Text>
+        <Text style={styles.hint}>
+          Vælg de sprog der bliver talt. Sprog du ikke vælger, bliver skrevet ud
+          som volapyk. {client ? 'Valget huskes på klienten.' : ''}
+        </Text>
+        <Pressable
+          onPress={() => {
+            Haptics.selectionAsync();
+            setLangPicker(true);
+          }}
+          style={({ pressed }) => [styles.langRow, pressed && { opacity: 0.85 }]}
+        >
+          <Text style={styles.langValue}>{languageSummary(languages)}</Text>
+          <Text style={styles.langChange}>Skift</Text>
+        </Pressable>
       </ScrollView>
 
       <View style={[styles.footer, { paddingBottom: insets.bottom + spacing.md }]}>
         <Button label="Start optagelse" onPress={startRecording} />
       </View>
+
+      <LanguagePickerModal
+        visible={langPicker}
+        selected={languages}
+        confirmLabel="Gem sprog"
+        onConfirm={pickLanguages}
+        onClose={() => setLangPicker(false)}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -183,6 +225,21 @@ const styles = StyleSheet.create({
   },
   addBtnText: { color: colors.accentSoft, fontSize: font.size.xl, fontWeight: font.weight.bold },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.lg },
+  langRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.lg,
+    minHeight: 52,
+    paddingVertical: spacing.md,
+  },
+  langValue: { color: colors.text, fontSize: font.size.md, flex: 1 },
+  langChange: { color: colors.accentSoft, fontSize: font.size.sm, fontWeight: font.weight.semibold },
   footer: {
     paddingHorizontal: spacing.xl,
     paddingTop: spacing.md,

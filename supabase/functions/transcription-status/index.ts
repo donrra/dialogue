@@ -15,12 +15,47 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-interface GladiaUtterance {
+interface GladiaChunk {
   speaker?: number;
+  /** `utterances` carry `text`; `sentences` carry `sentence`. */
   text?: string;
+  sentence?: string;
   start?: number;
   end?: number;
   language?: string;
+  confidence?: number;
+}
+
+interface Segment {
+  speaker: string;
+  text: string;
+  start: number;
+  end: number;
+  language?: string;
+  /** 0-1 from Gladia. Lets the app flag passages worth re-reading. */
+  confidence?: number;
+}
+
+/**
+ * Normalises whatever Gladia returned into the app's segment shape.
+ * We ask for `sentences: true`, which groups speech into whole sentences instead
+ * of the short fragments `utterances` produces: much easier to read, and better
+ * context for the analysis. Utterances stay as the fallback.
+ */
+function toSegments(chunks: GladiaChunk[]): Segment[] {
+  return chunks
+    .map((c) => ({
+      speaker:
+        typeof c.speaker === 'number' && c.speaker >= 0
+          ? `Taler ${c.speaker + 1}`
+          : 'Ukendt',
+      text: (c.sentence ?? c.text ?? '').trim(),
+      start: c.start ?? 0,
+      end: c.end ?? 0,
+      language: c.language,
+      confidence: typeof c.confidence === 'number' ? c.confidence : undefined,
+    }))
+    .filter((s) => s.text.length > 0);
 }
 
 Deno.serve(async (req) => {
@@ -53,13 +88,14 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     if (!row) return json({ status: 'pending', segments: [] });
-    // Already settled — return the stored result.
+    // Already settled: return the stored result.
     if (row.status === 'done' || row.status === 'error') {
       return json({
         status: row.status,
         segments: row.segments ?? [],
         language: row.language,
         error: row.error,
+        audioPath: row.audio_path,
       });
     }
     if (!row.gladia_id) return json({ status: row.status, segments: [] });
@@ -73,19 +109,21 @@ Deno.serve(async (req) => {
 
     if (status === 'done') {
       const tr = data.result?.transcription ?? {};
-      const utterances: GladiaUtterance[] = tr.utterances ?? [];
-      const segments = utterances
-        .map((u) => ({
-          speaker:
-            typeof u.speaker === 'number' && u.speaker >= 0
-              ? `Taler ${u.speaker + 1}`
-              : 'Ukendt',
-          text: (u.text ?? '').trim(),
-          start: u.start ?? 0,
-          end: u.end ?? 0,
-          language: u.language,
-        }))
-        .filter((s) => s.text.length > 0);
+      // Gladia has shipped sentences under both paths; accept either.
+      const sentenceBlock = data.result?.sentences ?? tr.sentences;
+      const sentences: GladiaChunk[] = Array.isArray(sentenceBlock?.results)
+        ? sentenceBlock.results
+        : Array.isArray(sentenceBlock)
+          ? sentenceBlock
+          : [];
+      let segments = toSegments(sentences);
+      if (segments.length === 0) {
+        segments = toSegments(tr.utterances ?? []);
+        console.log('[transcription-status] fell back to utterances', {
+          conversationId,
+          segments: segments.length,
+        });
+      }
       const language = Array.isArray(tr.languages)
         ? tr.languages.join(', ')
         : tr.languages ?? null;
@@ -96,31 +134,12 @@ Deno.serve(async (req) => {
         .eq('user_id', user.id)
         .eq('conversation_id', conversationId);
 
-      // The transcript is stored - delete the audio so no large, sensitive
-      // recordings linger in storage.
-      if (row.audio_path) {
-        const { error: rmErr } = await admin.storage
-          .from('recordings')
-          .remove([row.audio_path]);
-        if (rmErr) {
-          console.warn('[transcription-status] audio delete failed', {
-            conversationId,
-            path: row.audio_path,
-            error: rmErr.message,
-          });
-        } else {
-          await admin
-            .from('transcriptions')
-            .update({ audio_path: null })
-            .eq('user_id', user.id)
-            .eq('conversation_id', conversationId);
-          console.log('[transcription-status] audio deleted after transcription', {
-            conversationId,
-          });
-        }
-      }
+      // The audio deliberately survives here. It used to be deleted the moment
+      // the transcript landed, which meant a wrong transcript could never be run
+      // again - and the first transcripts were wrong. It is now kept for
+      // AUDIO_RETENTION_DAYS (see the `transcribe` function, which sweeps it).
 
-      return json({ status: 'done', segments, language });
+      return json({ status: 'done', segments, language, audioPath: row.audio_path });
     }
 
     if (status === 'error') {

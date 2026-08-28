@@ -20,6 +20,7 @@ interface ClientsValue {
   getById: (id: string) => Client | undefined;
   /** Creates a client with the next free color and returns it. */
   create: (name: string) => Client;
+  update: (id: string, patch: Partial<Client>) => void;
   remove: (id: string) => void;
 }
 
@@ -66,13 +67,17 @@ export function ClientsProvider({ children }: { children: React.ReactNode }) {
     [clients.length],
   );
 
+  const update = useCallback((id: string, patch: Partial<Client>) => {
+    setClients((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+  }, []);
+
   const remove = useCallback((id: string) => {
     setClients((prev) => prev.filter((c) => c.id !== id));
   }, []);
 
   const value = useMemo(
-    () => ({ clients, loading, getById, create, remove }),
-    [clients, loading, getById, create, remove],
+    () => ({ clients, loading, getById, create, update, remove }),
+    [clients, loading, getById, create, update, remove],
   );
 
   return <ClientsContext.Provider value={value}>{children}</ClientsContext.Provider>;

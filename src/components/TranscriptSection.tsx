@@ -3,13 +3,18 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-nati
 import * as Haptics from 'expo-haptics';
 import { colors, font, radius, spacing, speakerColorFor } from '@/theme/theme';
 import {
+  audioDaysLeft,
   getTranscription,
   refreshTranscription,
+  retranscribe,
   startTranscription,
   type TranscriptSegment,
   type TranscriptionStatus,
 } from '@/lib/transcription';
+import { DEFAULT_LANGUAGES, languageSummary } from '@/lib/languages';
+import { LanguagePickerModal } from './LanguagePickerModal';
 import { useConversations } from '@/context/ConversationsContext';
+import { useClients } from '@/context/ClientsContext';
 import { deleteLocalAudio } from '@/lib/audioCleanup';
 import { formatDuration } from '@/lib/format';
 import type { Conversation } from '@/lib/types';
@@ -19,15 +24,35 @@ type UiStatus = TranscriptionStatus | 'loading';
 
 export function TranscriptSection({ conversation }: { conversation: Conversation }) {
   const { update } = useConversations();
+  const { getById: getClient, update: updateClient } = useClients();
   const cid = conversation.id;
   const audioUri = conversation.audioUri;
+
+  // Names that will be said out loud, handed to the speech engine as a small
+  // dictionary so it stops guessing at them. The client's name matters most —
+  // it turns up again and again in a session.
+  const clientName = conversation.clientId
+    ? getClient(conversation.clientId)?.name
+    : undefined;
+  const vocabulary = useMemo(() => {
+    const names = conversation.participants.map((p) => p.name);
+    if (clientName) names.push(clientName);
+    return names.filter((n) => n.trim().length > 1);
+  }, [conversation.participants, clientName]);
+  const expectedSpeakers = conversation.participants.length;
 
   const [status, setStatus] = useState<UiStatus>('loading');
   const [segments, setSegments] = useState<TranscriptSegment[]>([]);
   const [language, setLanguage] = useState<string | null>(null);
   const [errMsg, setErrMsg] = useState<string | null>(null);
   const [picker, setPicker] = useState<string | null>(null);
+  const [langPicker, setLangPicker] = useState(false);
+  /** Storage path of the recording, or null once it has been swept. */
+  const [audioPath, setAudioPath] = useState<string | null>(null);
+  const [createdAt, setCreatedAt] = useState<string | null>(null);
   const startedRef = useRef(false);
+
+  const languages = conversation.languages ?? DEFAULT_LANGUAGES;
 
   const begin = useCallback(async () => {
     if (!audioUri) return;
@@ -35,13 +60,50 @@ export function TranscriptSection({ conversation }: { conversation: Conversation
     setStatus('processing');
     setErrMsg(null);
     try {
-      await startTranscription(cid, audioUri);
+      await startTranscription(cid, audioUri, {
+        languages,
+        vocabulary,
+        expectedSpeakers,
+      });
       setStatus('processing');
     } catch (e: any) {
       setStatus('error');
       setErrMsg(e?.message ?? 'Kunne ikke sende lyden til transskribering.');
     }
-  }, [audioUri, cid]);
+  }, [audioUri, cid, languages, vocabulary, expectedSpeakers]);
+
+  /**
+   * Runs the transcription again on the copy still held on the server, with the
+   * languages the user just picked. This is the whole point of keeping the
+   * recording around: a wrong transcript is fixable instead of final.
+   */
+  const runAgain = useCallback(
+    async (nextLanguages: string[]) => {
+      setLangPicker(false);
+      update(cid, { languages: nextLanguages });
+      // Correcting the languages here is also a correction of the client: if
+      // this session turned out to be Danish plus Urdu, the next one will be
+      // too. Saves discovering the same thing again next week.
+      if (conversation.clientId) {
+        updateClient(conversation.clientId, { languages: nextLanguages });
+      }
+      if (!audioPath) return;
+      setStatus('processing');
+      setSegments([]);
+      setErrMsg(null);
+      try {
+        await retranscribe(cid, audioPath, {
+          languages: nextLanguages,
+          vocabulary,
+          expectedSpeakers,
+        });
+      } catch (e: any) {
+        setStatus('error');
+        setErrMsg(e?.message ?? 'Kunne ikke starte transskriberingen igen.');
+      }
+    },
+    [audioPath, cid, update, updateClient, conversation.clientId, vocabulary, expectedSpeakers],
+  );
 
   // Initial load: resume an existing job or kick one off.
   useEffect(() => {
@@ -62,7 +124,10 @@ export function TranscriptSection({ conversation }: { conversation: Conversation
       setLanguage(row.language);
       setErrMsg(row.error);
       setStatus(row.status);
-      // Transcript is done - the audio has served its purpose, clean it up.
+      setAudioPath(row.audio_path);
+      setCreatedAt(row.created_at);
+      // The phone's copy is no longer needed - the server keeps one so the
+      // transcript can be run again.
       if (row.status === 'done' && audioUri) {
         await deleteLocalAudio(conversation);
         update(cid, { audioUri: undefined, compressedUri: undefined });
@@ -85,8 +150,9 @@ export function TranscriptSection({ conversation }: { conversation: Conversation
       if (p.language != null) setLanguage(p.language);
       if (p.error) setErrMsg(p.error);
       setStatus(p.status);
-      // Done: mark the conversation transcribed and delete the audio - the
-      // text is the documentation from here on.
+      if (p.audioPath !== undefined) setAudioPath(p.audioPath);
+      // Done: mark the conversation transcribed and drop the phone's copy. The
+      // server keeps its own until the retention window runs out.
       if (p.status === 'done') {
         await deleteLocalAudio(conversation);
         update(cid, {
@@ -122,6 +188,59 @@ export function TranscriptSection({ conversation }: { conversation: Conversation
     setPicker(null);
   };
 
+  // How long the recording is still available to run again.
+  const daysLeft = audioDaysLeft(createdAt);
+  const canRerun = !!audioPath;
+  const retentionNote = !canRerun
+    ? 'Lyden er slettet, så teksten kan ikke laves om.'
+    : daysLeft === 0
+      ? 'Lyden slettes ved din næste optagelse.'
+      : daysLeft === 1
+        ? 'Lyden gemmes endnu 1 dag, så du kan lave teksten om.'
+        : `Lyden gemmes endnu ${daysLeft} dage, så du kan lave teksten om.`;
+
+  /**
+   * The single most useful control on this screen: the transcript is only as
+   * good as the languages the engine was told to expect, and this is where the
+   * user corrects that and tries again.
+   */
+  const languageBar = (
+    <View style={styles.langBox}>
+      <View style={styles.langRow}>
+        <View style={styles.langTextCol}>
+          <Text style={styles.langLabel}>Talt sprog</Text>
+          <Text style={styles.langValue}>{languageSummary(languages)}</Text>
+        </View>
+        {canRerun ? (
+          <Pressable
+            style={({ pressed }) => [styles.langButton, pressed && styles.langButtonPressed]}
+            onPress={() => {
+              Haptics.selectionAsync();
+              setLangPicker(true);
+            }}
+          >
+            <Text style={styles.langButtonText}>Lav teksten om</Text>
+          </Pressable>
+        ) : null}
+      </View>
+      {languages.length > 1 && language ? (
+        <Text style={styles.langNote}>
+          Fundet i optagelsen: {language}. Passer det ikke, så vælg færre sprog.
+        </Text>
+      ) : null}
+      <Text style={styles.langNote}>{retentionNote}</Text>
+    </View>
+  );
+
+  const langModal = (
+    <LanguagePickerModal
+      visible={langPicker}
+      selected={languages}
+      onConfirm={runAgain}
+      onClose={() => setLangPicker(false)}
+    />
+  );
+
   if (status === 'loading') {
     return (
       <View style={styles.center}>
@@ -145,14 +264,21 @@ export function TranscriptSection({ conversation }: { conversation: Conversation
 
   if (status === 'error') {
     return (
-      <View style={styles.errorBox}>
-        <Text style={styles.errorTitle}>Transskriberingen gik i stå</Text>
-        {errMsg ? <Text style={styles.errorBody}>{errMsg}</Text> : null}
-        {audioUri ? (
-          <Pressable style={styles.retry} onPress={begin}>
-            <Text style={styles.retryText}>Prøv igen</Text>
-          </Pressable>
-        ) : null}
+      <View>
+        <View style={styles.errorBox}>
+          <Text style={styles.errorTitle}>Transskriberingen gik i stå</Text>
+          {errMsg ? <Text style={styles.errorBody}>{errMsg}</Text> : null}
+          {audioUri || canRerun ? (
+            <Pressable
+              style={styles.retry}
+              onPress={() => (audioUri ? begin() : runAgain(languages))}
+            >
+              <Text style={styles.retryText}>Prøv igen</Text>
+            </Pressable>
+          ) : null}
+        </View>
+        {languageBar}
+        {langModal}
       </View>
     );
   }
@@ -160,23 +286,28 @@ export function TranscriptSection({ conversation }: { conversation: Conversation
   // status === 'done'
   if (segments.length === 0) {
     return (
-      <View style={styles.errorBox}>
-        <Text style={styles.errorTitle}>Ingen tale fundet</Text>
-        <Text style={styles.errorBody}>
-          Der blev ikke fundet nogen tale i optagelsen.
-        </Text>
-        {audioUri ? (
-          <Pressable style={styles.retry} onPress={begin}>
-            <Text style={styles.retryText}>Prøv igen</Text>
-          </Pressable>
-        ) : null}
+      <View>
+        <View style={styles.errorBox}>
+          <Text style={styles.errorTitle}>Ingen tale fundet</Text>
+          <Text style={styles.errorBody}>
+            Der blev ikke fundet nogen tale i optagelsen. Er der talt et andet
+            sprog end det valgte, kan du rette det og lave teksten om.
+          </Text>
+          {audioUri ? (
+            <Pressable style={styles.retry} onPress={begin}>
+              <Text style={styles.retryText}>Prøv igen</Text>
+            </Pressable>
+          ) : null}
+        </View>
+        {languageBar}
+        {langModal}
       </View>
     );
   }
 
   return (
     <View>
-      {language ? <Text style={styles.langHint}>Sprog: {language}</Text> : null}
+      {languageBar}
       <Text style={styles.hintText}>💡 Klik på "Taler 1" eller "Taler 2" for at linke til deltagernes navne</Text>
 
       <View style={styles.thread}>
@@ -216,6 +347,7 @@ export function TranscriptSection({ conversation }: { conversation: Conversation
         onReset={() => picker && assignSpeaker(picker, null)}
         onClose={() => setPicker(null)}
       />
+      {langModal}
     </View>
   );
 }
@@ -256,7 +388,30 @@ const styles = StyleSheet.create({
     borderColor: colors.accent,
   },
   retryText: { color: colors.accentSoft, fontSize: font.size.sm, fontWeight: font.weight.semibold },
-  langHint: { color: colors.textFaint, fontSize: font.size.xs, marginBottom: spacing.md },
+  langBox: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+    gap: spacing.sm,
+  },
+  langRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  langTextCol: { flex: 1 },
+  langLabel: { color: colors.textFaint, fontSize: font.size.xs },
+  langValue: { color: colors.text, fontSize: font.size.md, fontWeight: font.weight.semibold },
+  langButton: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: colors.accentDim,
+    borderWidth: 1,
+    borderColor: colors.accent,
+  },
+  langButtonPressed: { backgroundColor: colors.surfacePressed },
+  langButtonText: { color: colors.accentSoft, fontSize: font.size.sm, fontWeight: font.weight.semibold },
+  langNote: { color: colors.textMuted, fontSize: font.size.xs, lineHeight: 17 },
   thread: { gap: spacing.md },
   segment: { gap: spacing.xs },
   speakerRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },

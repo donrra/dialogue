@@ -18,6 +18,14 @@ export interface Client {
   /** Index into the speaker color palette — stable color per client. */
   colorIndex: number;
   createdAt: number; // epoch ms
+
+  /**
+   * The languages this client normally speaks, as ISO codes. A client speaks
+   * the same languages every session, so choosing once here saves picking them
+   * again each time - and it is what stops the engine transcribing, say, Urdu
+   * as if it were Danish.
+   */
+  languages?: string[];
 }
 
 export type ConversationStatus =
@@ -49,4 +57,10 @@ export interface Conversation {
 
   /** The client (patient) this session belongs to, if assigned. */
   clientId?: string;
+
+  /**
+   * Languages actually spoken in this session, as ISO codes. Sent to the speech
+   * engine so it does not have to guess. Defaults to Danish when unset.
+   */
+  languages?: string[];
 }
