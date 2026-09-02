@@ -98,8 +98,19 @@ function participantNames(conversation: Conversation): string[] {
 }
 
 /**
- * The printable note. A4 with no page margins from the renderer (expo-print
- * asks Android for NO_MARGINS), so all whitespace is controlled here.
+ * The printable note.
+ *
+ * Two things are load-bearing here and easy to break by accident:
+ *
+ *  - Margins live in `@page`, not in body padding. Body padding is applied once
+ *    across the whole flow, so a second page would start hard against the paper
+ *    edge. `@page` margins are applied to every page.
+ *  - The running header repeats via `display: table-header-group`, which is the
+ *    one mechanism Android's print engine honours. A loose page 2 out of a
+ *    physical file is otherwise impossible to identify.
+ *
+ * Page numbers ("Side 2 af 3") would need CSS paged-media margin boxes, which
+ * Android does not implement at all. The running header stands in for them.
  */
 export function buildJournalHtml(input: JournalExportInput): string {
   const { conversation, client, analysis } = input;
@@ -124,108 +135,143 @@ export function buildJournalHtml(input: JournalExportInput): string {
     ? `<section class="field"><h2>Resultat</h2>${toParagraphs(raw)}</section>`
     : '';
 
+  // Repeated on every page so a page pulled out of a physical file can still
+  // be placed. Page 1 carries the real title below it.
+  const runner = ['Journalnotat', clientName, sessionDate].filter(Boolean).join('  ·  ');
+
   return `<!DOCTYPE html>
 <html lang="da">
 <head>
 <meta charset="utf-8" />
 <style>
-  @page { size: A4; margin: 0; }
+  /* Every page gets the same margins. Do not move these to body padding. */
+  @page { size: A4; margin: 18mm 16mm 17mm; }
+
   * { box-sizing: border-box; }
+
+  /* Roboto is the face Android actually has; the rest are for desktop renderers. */
   body {
     margin: 0;
-    padding: 18mm 16mm 16mm;
-    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-family: Roboto, "Helvetica Neue", Helvetica, Arial, sans-serif;
     font-size: 10.5pt;
-    line-height: 1.5;
-    color: #111111;
+    line-height: 1.45;
+    color: #1A1A1A;
+    -webkit-font-smoothing: antialiased;
   }
-  header { border-bottom: 1.2pt solid #111111; padding-bottom: 5mm; margin-bottom: 7mm; }
-  h1 {
-    margin: 0 0 4mm;
-    font-size: 17pt;
-    font-weight: 600;
-    letter-spacing: 0.2pt;
+
+  /* Type scale. Four sizes, nothing else. */
+  h1 { font-size: 16pt; font-weight: 600; letter-spacing: 0.1pt; margin: 0 0 5mm; }
+  h2 { font-size: 9pt; font-weight: 700; letter-spacing: 0.5pt; text-transform: uppercase; color: #2A2A2A; margin: 0 0 1.8mm; }
+  p  { font-size: 10.5pt; margin: 0 0 2.2mm; orphans: 2; widows: 2; }
+  .small { font-size: 8.5pt; }
+
+  /* Running header. table-header-group is what makes it repeat on every page. */
+  table.doc { width: 100%; border-collapse: collapse; }
+  table.doc > thead { display: table-header-group; }
+  table.doc > thead td, table.doc > tbody td { padding: 0; }
+  /* Deliberately quiet: it is a letterhead line, not a second title. */
+  .runner {
+    padding-bottom: 1.8mm;
+    margin-bottom: 6mm;
+    border-bottom: 0.5pt solid #C8C8C8;
+    font-size: 8pt;
+    letter-spacing: 0.3pt;
+    color: #6A6A6A;
   }
-  .ident { display: table; width: 100%; border-collapse: collapse; }
+
+  /* Identification block. Never allowed to split across pages. */
+  .ident {
+    display: table;
+    width: 100%;
+    margin-bottom: 7mm;
+    padding-bottom: 5mm;
+    border-bottom: 1.2pt solid #1A1A1A;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
   .ident-row { display: table-row; }
-  .ident-row > * { display: table-cell; padding: 0.8mm 0; vertical-align: top; }
+  .ident-row > * { display: table-cell; padding: 0.9mm 0; vertical-align: top; }
   .ident-label {
-    width: 32mm;
+    width: 34mm;
+    padding-right: 4mm;
     font-size: 8.5pt;
+    font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 0.4pt;
-    color: #555555;
-    padding-right: 4mm;
+    color: #6A6A6A;
   }
   .ident-value { font-weight: 500; }
+
+  /* A heading never sits alone at the foot of a page, and a field never leaves
+     a single stranded line behind. Long fields may still split, which is what
+     you want - forcing them whole would push half-empty pages. */
   .field { margin-bottom: 6.5mm; }
-  h2 {
-    margin: 0 0 1.5mm;
-    font-size: 9pt;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.5pt;
-    color: #333333;
-    break-after: avoid;
-    page-break-after: avoid;
-  }
-  p { margin: 0 0 2mm; }
+  .field > h2 { break-after: avoid; page-break-after: avoid; }
+  .field > p:first-of-type { break-before: avoid; page-break-before: avoid; }
   p:last-child { margin-bottom: 0; }
-  .empty { color: #888888; font-style: italic; }
+  .empty { color: #8A8A8A; font-style: italic; }
+
+  /* The signature block is meaningless if split. */
   footer {
     margin-top: 10mm;
     padding-top: 5mm;
-    border-top: 0.5pt solid #bbbbbb;
-    font-size: 8.5pt;
-    color: #555555;
+    border-top: 0.5pt solid #C8C8C8;
+    color: #5A5A5A;
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
-  .sign { margin-top: 8mm; }
-  .sign-line {
-    border-bottom: 0.5pt solid #111111;
-    height: 9mm;
-    width: 78mm;
-  }
-  .sign-caption { font-size: 8.5pt; color: #555555; padding-top: 1.5mm; }
-  .origin { margin-top: 5mm; }
+  .sign { margin-top: 7mm; }
+  .sign-line { width: 78mm; height: 9mm; border-bottom: 0.5pt solid #1A1A1A; }
+  .sign-caption { padding-top: 1.5mm; color: #6A6A6A; }
+  .origin { margin-top: 5mm; line-height: 1.4; }
 </style>
 </head>
 <body>
-  <header>
-    <h1>Journalnotat</h1>
-    <div class="ident">
-      <div class="ident-row">
-        <div class="ident-label">Klient</div>
-        <div class="ident-value">${escapeHtml(clientName)}</div>
+<table class="doc">
+  <thead>
+    <tr><td>
+      <div class="runner">${escapeHtml(runner)}</div>
+    </td></tr>
+  </thead>
+  <tbody>
+    <tr><td>
+      <h1>Journalnotat</h1>
+      <div class="ident">
+        <div class="ident-row">
+          <div class="ident-label">Klient</div>
+          <div class="ident-value">${escapeHtml(clientName)}</div>
+        </div>
+        <div class="ident-row">
+          <div class="ident-label">Sessionsdato</div>
+          <div class="ident-value">${escapeHtml(sessionDate)}</div>
+        </div>
+        <div class="ident-row">
+          <div class="ident-label">Til stede</div>
+          <div class="ident-value">${escapeHtml(people.length ? people.join(', ') : 'Ikke angivet')}</div>
+        </div>
+        <div class="ident-row">
+          <div class="ident-label">Session</div>
+          <div class="ident-value">${escapeHtml(conversation.title)}</div>
+        </div>
       </div>
-      <div class="ident-row">
-        <div class="ident-label">Sessionsdato</div>
-        <div class="ident-value">${escapeHtml(sessionDate)}</div>
-      </div>
-      <div class="ident-row">
-        <div class="ident-label">Til stede</div>
-        <div class="ident-value">${escapeHtml(people.length ? people.join(', ') : 'Ikke angivet')}</div>
-      </div>
-      <div class="ident-row">
-        <div class="ident-label">Session</div>
-        <div class="ident-value">${escapeHtml(conversation.title)}</div>
-      </div>
-    </div>
-  </header>
 
-  ${fields}
-  ${rawBlock}
+      ${fields}
+      ${rawBlock}
 
-  <footer>
-    <div class="sign">
-      <div class="sign-line"></div>
-      <div class="sign-caption">Noteret af (navn og dato)</div>
-    </div>
-    <div class="origin">
-      Notatet er udarbejdet på grundlag af en lydoptagelse af sessionen og skal
-      gennemlæses og godkendes af den ansvarlige behandler.
-      Udskrevet ${escapeHtml(danishDate(Date.now()))}.
-    </div>
-  </footer>
+      <footer class="small">
+        <div class="sign">
+          <div class="sign-line"></div>
+          <div class="sign-caption">Noteret af (navn, titel og dato)</div>
+        </div>
+        <div class="origin">
+          Notatet er udarbejdet på grundlag af en lydoptagelse af sessionen og skal
+          gennemlæses og godkendes af den ansvarlige behandler.
+          Udskrevet ${escapeHtml(danishDate(Date.now()))}.
+        </div>
+      </footer>
+    </td></tr>
+  </tbody>
+</table>
 </body>
 </html>`;
 }
