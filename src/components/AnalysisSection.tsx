@@ -1,7 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors, font, radius, spacing } from '@/theme/theme';
 import { runAnalysis, getAnalysis, type AnalysisResult } from '@/lib/analysis';
+import { useClients } from '@/context/ClientsContext';
+import { getTranscription } from '@/lib/transcription';
+import { exportJournalJson, exportJournalPdf, JOURNAL_FIELDS } from '@/lib/journalExport';
 import type { Conversation } from '@/lib/types';
 
 type AnalysisType = 'psykolog' | 'forretningsreferat' | 'interview';
@@ -30,6 +33,8 @@ const ANALYSIS_TYPES: Array<{
 
 export function AnalysisSection({ conversation }: { conversation: Conversation }) {
   const cid = conversation.id;
+  const { getById: getClient } = useClients();
+  const client = conversation.clientId ? getClient(conversation.clientId) : undefined;
 
   // Track results for all types
   const [results, setResults] = useState<Record<AnalysisType, AnalysisResult | null>>({
@@ -89,6 +94,32 @@ export function AnalysisSection({ conversation }: { conversation: Conversation }
   const psykologResult = results.psykolog;
   const psykologRunning = running === 'psykolog';
 
+  const [exporting, setExporting] = useState<'pdf' | 'json' | null>(null);
+
+  const handleExport = useCallback(
+    async (format: 'pdf' | 'json') => {
+      const analysis = results.psykolog;
+      if (!analysis) return;
+
+      setExporting(format);
+      try {
+        // The transcript only travels with the JSON export - the PDF is the
+        // note alone, which is what belongs in a client's file.
+        const segments =
+          format === 'json' ? ((await getTranscription(cid))?.segments ?? undefined) : undefined;
+
+        const input = { conversation, client, analysis, segments };
+        if (format === 'pdf') await exportJournalPdf(input);
+        else await exportJournalJson(input);
+      } catch (e: any) {
+        Alert.alert('Eksport mislykkedes', e?.message ?? 'Filen kunne ikke laves.');
+      } finally {
+        setExporting(null);
+      }
+    },
+    [cid, client, conversation, results.psykolog],
+  );
+
   return (
     <View>
       <View style={styles.typeCard}>
@@ -121,9 +152,35 @@ export function AnalysisSection({ conversation }: { conversation: Conversation }
         )}
 
         {psykologResult && (
-          <View style={styles.resultBox}>
-            <PsykologResultDisplay result={psykologResult} />
-          </View>
+          <>
+            <View style={styles.resultBox}>
+              <PsykologResultDisplay result={psykologResult} />
+            </View>
+            <View style={styles.exportRow}>
+              <Pressable
+                style={styles.exportBtn}
+                onPress={() => handleExport('pdf')}
+                disabled={exporting !== null}
+              >
+                {exporting === 'pdf' ? (
+                  <ActivityIndicator color={colors.accentSoft} size="small" />
+                ) : (
+                  <Text style={styles.exportBtnText}>Hent som PDF</Text>
+                )}
+              </Pressable>
+              <Pressable
+                style={styles.exportBtn}
+                onPress={() => handleExport('json')}
+                disabled={exporting !== null}
+              >
+                {exporting === 'json' ? (
+                  <ActivityIndicator color={colors.accentSoft} size="small" />
+                ) : (
+                  <Text style={styles.exportBtnText}>Gem data (JSON)</Text>
+                )}
+              </Pressable>
+            </View>
+          </>
         )}
 
         {psykologRunning && (
@@ -153,19 +210,8 @@ function PsykologResultDisplay({ result }: { result: AnalysisResult }) {
     return JSON.stringify(value);
   };
 
-  // Display STPS-compliant fields
-  const fields = [
-    { label: 'Dato', key: 'datum' },
-    { label: 'Deltagere', key: 'deltagere' },
-    { label: 'Planlagt behandling', key: 'planlagt_behandling' },
-    { label: 'Udført behandling', key: 'udfort_behandling' },
-    { label: 'Tilstand', key: 'tilstand' },
-    { label: 'Respons på behandling', key: 'respons' },
-    { label: 'Observationer', key: 'observationer' },
-    { label: 'Opfølgning', key: 'opfolging' },
-  ];
-
-  const visibleFields = fields.filter(({ key }) => output[key]);
+  // The STPS fields, in the same order the PDF prints them.
+  const visibleFields = JOURNAL_FIELDS.filter(({ key }) => output[key]);
   const hasRaw = Boolean(output.raw);
   const isEmpty = visibleFields.length === 0 && !hasRaw;
 
@@ -245,6 +291,20 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     padding: spacing.lg,
   },
+  exportRow: { flexDirection: 'row', gap: spacing.sm },
+  exportBtn: {
+    flex: 1,
+    minHeight: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceHi,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  exportBtnText: { color: colors.text, fontSize: font.size.sm, fontWeight: font.weight.semibold },
   field: { marginBottom: spacing.lg, gap: spacing.xs },
   fieldLabel: { color: colors.textMuted, fontSize: font.size.xs, textTransform: 'uppercase', fontWeight: font.weight.bold },
   fieldValue: { color: colors.text, fontSize: font.size.md, lineHeight: 22 },
